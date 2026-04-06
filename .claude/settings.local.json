@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "ollama": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "ollama-mcp-server"
+      ]
+    }
+  },
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434",
+      "models": [
+        "qwen2.5:1.5b"
+      ]
+    }
+  }
+}

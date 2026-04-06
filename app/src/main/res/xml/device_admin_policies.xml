@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- السياسات المستخدمة للرقابة الأبوية -->
+    <uses-policies>
+
+        <!-- صلاحية قفل الشاشة فوراً (Force Lock) -->
+        <force-lock />
+
+        <!-- صلاحية مسح البيانات (Factory Reset) -->
+        <wipe-data />
+
+        <!-- صلاحيات إضافية يمكن تفعيلها حسب الحاجة -->
+
+        <!-- مراقبة محاولات كلمة المرور الفاشلة -->
+        <watch-login />
+
+        <!-- إعادة تعيين كلمة المرور -->
+        <reset-password />
+
+        <!-- تعيين متطلبات كلمة المرور -->
+        <limit-password />
+
+        <!-- التحكم في وقت انتهاء صلاحية كلمة المرور -->
+        <expire-password />
+
+        <!-- تشفير التخزين -->
+        <encrypted-storage />
+
+        <!-- تعطيل الكاميرا -->
+        <disable-camera />
+
+    </uses-policies>
+
+</device-admin>
