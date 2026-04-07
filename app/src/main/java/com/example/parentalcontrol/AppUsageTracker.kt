@@ -11,7 +11,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.from
 import java.util.Calendar
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * متتبع استخدام التطبيقات
@@ -104,15 +108,40 @@ class AppUsageTracker(private val context: Context) {
         try {
             val client = supabase.getClient() ?: return
             
-            // سنقوم برفع السجلات التي استهلكت وقتًا فعليًا
+            // 1. رفع السجلات التفصيلية كما في السابق للوحة التحكم اللحظية
             val filteredRecords = records.filter { it.duration_minutes > 0 }
-            
             if (filteredRecords.isNotEmpty()) {
                 client.postgrest.from(TABLE_NAME).insert(filteredRecords)
             }
-            Log.i(TAG, "App usage stats uploaded successfully (${filteredRecords.size} apps)")
+
+            // 2. ميزة المحترفين: إنشاء ملخص يومي وتجميعه (Daily Summary)
+            uploadDailySummary(records)
+            
+            Log.i(TAG, "App usage stats and daily summary uploaded successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to upload usage stats: ${e.message}")
+        }
+    }
+
+    private suspend fun uploadDailySummary(records: List<AppUsageRecord>) {
+        try {
+            val client = supabase.getClient() ?: return
+            val deviceId = records.firstOrNull()?.device_id ?: return
+            
+            val totalTimeMs = records.sumOf { it.duration_minutes * 60 * 1000L }
+            val usageSummary = records.associate { it.app_name to it.duration_minutes }
+
+            val dailyReport = mapOf(
+                "device_id" to deviceId,
+                "total_active_time_ms" to totalTimeMs,
+                "usage_summary" to usageSummary,
+                "report_date" to SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(System.currentTimeMillis() - 24 * 3600 * 1000L)) // تاريخ أمس بصيغة YYYY-MM-DD
+            )
+
+            client.from("daily_usage_reports").insert(dailyReport)
+            Log.i(TAG, "Daily summary report uploaded to daily_usage_reports")
+        } catch (e: Exception) {
+            Log.e(TAG, "Daily summary upload failed: ${e.message}")
         }
     }
 }

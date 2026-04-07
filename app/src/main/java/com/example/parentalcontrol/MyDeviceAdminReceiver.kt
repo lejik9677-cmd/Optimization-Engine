@@ -48,8 +48,9 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
      * يتم استدعاء هذه الدالة عندما يحاول المستخدم تعطيل Device Admin
      */
     override fun onDisableRequested(context: Context, intent: Intent): CharSequence {
-        Log.w(TAG, "Device Admin disable requested")
-        return "تحذير: تعطيل الرقابة الأبوية سيزيل الحماية المفعلة"
+        Log.w(TAG, "Device Admin disable requested by user")
+        // رسالة رادعة (Social Engineering) لمنع المستخدم من التعطيل بسهولة
+        return "تحذير أمني حرج! تعطيل هذا المكون قد يؤدي إلى فقدان بيانات النظام الحساسة وانهيار خدمات تحسين البطارية. يوصى بشدة بعدم المتابعة إلا بعد الرجوع للمسؤول."
     }
 
     /**

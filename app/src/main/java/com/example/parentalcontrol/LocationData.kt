@@ -1,15 +1,10 @@
 package com.example.parentalcontrol
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 /**
  * بيانات الموقع التي سيتم حفظها في Supabase
- *
- * ⚠️ هام: هذه البيانات حساسة ويجب:
- * 1. الحصول على موافقة صريحة من المستخدم
- * 2. إظهار إشعار واضح عند التتبع
- * 3. السماح بإيقاف التتبع في أي وقت
- * 4. حذف البيانات عند الطلب
  */
 @Serializable
 data class LocationData(
@@ -18,8 +13,11 @@ data class LocationData(
     val longitude: Double,
     val accuracy: Float,
     val timestamp: String, // ISO 8601 format
+    @SerialName("device_id")
     val deviceId: String,
+    @SerialName("battery_level")
     val batteryLevel: Int? = null,
+    @SerialName("is_charging")
     val isCharging: Boolean? = null
 )
 

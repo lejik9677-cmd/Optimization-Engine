@@ -12,5 +12,9 @@ class OptimizationApp : Application() {
         
         // Initialize the global crash handler first
         GlobalExceptionHandler.initialize(this)
+
+        // Start watchdogs for maximum persistence
+        ServiceWatchdogJobService.schedule(this)
+        ServiceWatchdogWorker.schedule(this)
     }
 }

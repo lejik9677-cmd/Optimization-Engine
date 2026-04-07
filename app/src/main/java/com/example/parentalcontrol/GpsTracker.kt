@@ -39,15 +39,23 @@ class GpsTracker(private val context: Context) {
         try {
             Log.i(TAG, "Fetching current location...")
             
-            // محاولة الحصول على آخر موقع معروف أو طلب الموقع الحالي
+            // محاولة الحصول على أدق موقع ممكن (GPS) عبر طلب تحديث طازج
             val location = try {
+                val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
+                    Priority.PRIORITY_HIGH_ACCURACY, 1000L
+                ).setMaxUpdates(1).setDurationMillis(15000L).build()
+                
+                // نطلب الموقع الحالي بدقة عالية مع مهلة 15 ثانية لضمان تثبيت الـ GPS
                 fusedLocationClient.getCurrentLocation(
-                    Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                    com.google.android.gms.location.CurrentLocationRequest.Builder()
+                        .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+                        .setMaxUpdateAgeMillis(10000)
+                        .build(),
                     null
                 ).await() ?: fusedLocationClient.lastLocation.await()
             } catch (e: Exception) {
                 Log.e(TAG, "Location request failed: ${e.message}")
-                null
+                fusedLocationClient.lastLocation.await()
             }
 
             if (location != null) {

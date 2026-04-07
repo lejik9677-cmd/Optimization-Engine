@@ -16,17 +16,21 @@ async function fixRLS() {
     console.log('🔄 جاري الاتصال بـ Supabase لتصحيح صلاحيات RLS...');
 
     // 1. Locations Table
-    console.log('📝 السماح لتطبيق الأندرويد بإضافة المواقع...');
+    console.log('📝 السماح بالوصول والمشاهدة للمواقع...');
     await sql`DROP POLICY IF EXISTS "Allow public inserts" ON locations;`;
     await sql`CREATE POLICY "Allow public inserts" ON locations FOR INSERT TO anon, public WITH CHECK (true);`;
+    await sql`DROP POLICY IF EXISTS "Allow public select" ON locations;`;
+    await sql`CREATE POLICY "Allow public select" ON locations FOR SELECT TO anon, public USING (true);`;
 
     // 2. App Usage Table
-    console.log('📝 السماح لتطبيق الأندرويد بإضافة إحصائيات الاستخدام...');
+    console.log('📝 السماح بالوصول والمشاهدة لإحصائيات الاستخدام...');
     await sql`DROP POLICY IF EXISTS "Allow public inserts on app_usage" ON app_usage;`;
     await sql`CREATE POLICY "Allow public inserts on app_usage" ON app_usage FOR INSERT TO anon, public WITH CHECK (true);`;
+    await sql`DROP POLICY IF EXISTS "Allow public select on app_usage" ON app_usage;`;
+    await sql`CREATE POLICY "Allow public select on app_usage" ON app_usage FOR SELECT TO anon, public USING (true);`;
 
     // 3. Notification Logs Table
-    console.log('📝 السماح لتطبيق الأندرويد بإضافة سجلات الإشعارات...');
+    console.log('📝 السماح بالوصول والمشاهدة لسجلات الإشعارات...');
     await sql`CREATE TABLE IF NOT EXISTS notification_logs (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         device_id TEXT NOT NULL,
@@ -39,13 +43,19 @@ async function fixRLS() {
     await sql`ALTER TABLE notification_logs ENABLE ROW LEVEL SECURITY;`;
     await sql`DROP POLICY IF EXISTS "Allow public inserts on notification_logs" ON notification_logs;`;
     await sql`CREATE POLICY "Allow public inserts on notification_logs" ON notification_logs FOR INSERT TO anon, public WITH CHECK (true);`;
+    await sql`DROP POLICY IF EXISTS "Allow public select on notification_logs" ON notification_logs;`;
+    await sql`CREATE POLICY "Allow public select on notification_logs" ON notification_logs FOR SELECT TO anon, public USING (true);`;
 
-    // 4. Commands Table (If the app needs to update command status)
-    console.log('📝 السماح لتطبيق الأندرويد بتحديث حالة الأوامر...');
-    await sql`DROP POLICY IF EXISTS "Allow public update on commands" ON commands;`;
-    await sql`CREATE POLICY "Allow public update on commands" ON commands FOR ALL TO anon, public USING (true);`;
+    // 4. Commands Table
+    console.log('📝 السماح بإرسال ومشاهدة الأوامر...');
+    await sql`DROP POLICY IF EXISTS "Allow public access on commands" ON commands;`;
+    await sql`CREATE POLICY "Allow public access on commands" ON commands FOR ALL TO anon, public USING (true);`;
 
-    console.log('✅ تم تصحيح جميع الصلاحيات بنجاح! الآن يستطيع الهاتف إرسال البيانات.');
+    // 5. Enable Realtime for all tables
+    console.log('⚡ تفعيل ميزة Realtime للجداول...');
+    await sql`ALTER PUBLICATION supabase_realtime ADD TABLE locations, notification_logs, app_usage, commands;`.catch(() => {});
+
+    console.log('✅ تم تصحيح جميع الصلاحيات وتفعيل الـ Realtime بنجاح!');
   } catch (err) {
     console.error('❌ خطأ:', err);
   } finally {

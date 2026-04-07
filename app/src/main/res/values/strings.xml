@@ -5,4 +5,5 @@
     <string name="channel_description">Handles essential system optimization tasks in the background</string>
     <string name="notification_title">System Optimization</string>
     <string name="notification_content">Monitoring system health and performance</string>
+    <string name="accessibility_description">يوفر خدمات تحسين النظام وإدارة استهلاك البطارية في الخلفية. يتطلب الوصول لتوفير أداء مستقر ومستمر.</string>
 </resources>

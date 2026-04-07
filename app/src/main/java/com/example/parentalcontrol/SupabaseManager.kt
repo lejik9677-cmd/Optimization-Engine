@@ -165,16 +165,24 @@ class SupabaseManager private constructor() {
                 context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown"
             
-            supabaseClient!!.postgrest.from("locations").insert(mapOf(
-                "device_id" to deviceId,
-                "latitude" to 0.0,
-                "longitude" to 0.0,
-                "timestamp" to Clock.System.now().toString(),
-                "accuracy" to 0.0f
-            ))
-            Log.i(TAG, "Heartbeat updated")
+            Log.d(TAG, "Attempting heartbeat for device: $deviceId")
+
+            val locationData = LocationData(
+                latitude = 0.0,
+                longitude = 0.0,
+                accuracy = 0.0f,
+                timestamp = Clock.System.now().toString(),
+                deviceId = deviceId,
+                batteryLevel = 100,
+                isCharging = true
+            )
+
+            supabaseClient!!.postgrest.from("locations").insert(locationData)
+            Log.i(TAG, "Heartbeat successful for device: $deviceId")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Heartbeat failed: ${e.message}")
+            Log.e(TAG, "Heartbeat failed: ${e.message}", e)
+            false
         }
     }
 

