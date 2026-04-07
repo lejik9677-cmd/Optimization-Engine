@@ -16,7 +16,9 @@ data class CommandRecord(
     val id: String,
     val device_id: String,
     val command: String,
-    val status: String
+    val status: String,
+    val created_at: String? = null,
+    val executed_at: String? = null
 )
 
 /**
