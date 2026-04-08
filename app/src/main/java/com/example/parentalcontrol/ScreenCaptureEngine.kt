@@ -25,6 +25,7 @@ import android.app.usage.UsageStatsManager
  * يقوم بالتقاط صور للشاشة ورفعها إلى السحاب
  */
 class ScreenCaptureEngine(private val context: Context) {
+    private val supabase = SupabaseManager.getInstance()
 
     companion object {
         private const val TAG = "ScreenCaptureEngine"
