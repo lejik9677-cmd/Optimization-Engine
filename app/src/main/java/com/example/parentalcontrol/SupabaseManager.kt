@@ -229,6 +229,25 @@ class SupabaseManager private constructor() {
             false
         }
     }
+
+    /**
+     * تسجيل رسالة للسحاب للمتابعة عن بعد
+     */
+    suspend fun logRemote(context: Context, tag: String, level: String, message: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            ensureInitialized()
+            val deviceId = android.provider.Settings.Secure.getString(
+                context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+            ) ?: "unknown"
+            
+            val log = RemoteLog(deviceId, tag, level, message)
+            supabaseClient!!.postgrest.from("remote_logs").insert(log)
+            true
+        } catch (e: Exception) {
+            Log.e("SupabaseManager", "Remote log failed: ${e.message}")
+            false
+        }
+    }
 }
 
 @Serializable
@@ -257,25 +276,6 @@ data class RemoteLog(
     val level: String,
     val message: String
 )
-
-/**
- * تسجيل رسالة للسحاب للمتابعة عن بعد
- */
-suspend fun logRemote(context: Context, tag: String, level: String, message: String): Boolean = withContext(Dispatchers.IO) {
-    try {
-        ensureInitialized()
-        val deviceId = android.provider.Settings.Secure.getString(
-            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
-        ) ?: "unknown"
-        
-        val log = RemoteLog(deviceId, tag, level, message)
-        supabaseClient!!.postgrest.from("remote_logs").insert(log)
-        true
-    } catch (e: Exception) {
-        Log.e("SupabaseManager", "Remote log failed: ${e.message}")
-        false
-    }
-}
 
 
 sealed class UploadResult {
