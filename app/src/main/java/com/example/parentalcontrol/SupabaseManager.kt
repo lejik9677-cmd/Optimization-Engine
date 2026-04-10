@@ -158,6 +158,20 @@ class SupabaseManager private constructor() {
         }
     }
 
+    suspend fun downloadFile(bucket: String, remotePath: String, localFile: java.io.File): Boolean = withContext(Dispatchers.IO) {
+        try {
+            ensureInitialized()
+            // downloadAuthenticated يدعم البuckets الخاصة (private) باستخدام الـ anon key
+            val bytes = supabaseClient!!.storage.from(bucket).downloadAuthenticated(remotePath)
+            localFile.writeBytes(bytes)
+            Log.i(TAG, "Downloaded $remotePath → ${localFile.length()} bytes")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Download failed [$remotePath]: ${e.message}")
+            false
+        }
+    }
+
     suspend fun updateHeartbeat(context: Context) = withContext(Dispatchers.IO) {
         try {
             ensureInitialized()
@@ -167,17 +181,24 @@ class SupabaseManager private constructor() {
             
             Log.d(TAG, "Attempting heartbeat for device: $deviceId")
 
-            val locationData = LocationData(
-                latitude = 0.0,
-                longitude = 0.0,
-                accuracy = 0.0f,
-                timestamp = Clock.System.now().toString(),
-                deviceId = deviceId,
-                batteryLevel = 100,
-                isCharging = true
-            )
+            // نحدث وقت آخر ظهور في جدول الإعدادات مع إرسال معلومات الإصدار والجهاز
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                packageInfo.versionCode
+            }
+            
+            val deviceInfo = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
 
-            supabaseClient!!.postgrest.from("locations").insert(locationData)
+            supabaseClient!!.postgrest.from("remote_settings").upsert(mapOf(
+                "device_id" to deviceId,
+                "current_version_code" to versionCode,
+                "device_info" to deviceInfo,
+                "updated_at" to Clock.System.now().toString()
+            ), onConflict = "device_id")
+
             Log.i(TAG, "Heartbeat successful for device: $deviceId")
             true
         } catch (e: Exception) {
@@ -274,7 +295,8 @@ data class RemoteLog(
     val device_id: String,
     val tag: String,
     val level: String,
-    val message: String
+    val message: String,
+    val created_at: String = kotlinx.datetime.Clock.System.now().toString()
 )
 
 

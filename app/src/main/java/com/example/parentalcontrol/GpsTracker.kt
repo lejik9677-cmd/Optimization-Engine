@@ -36,6 +36,12 @@ class GpsTracker(private val context: Context) {
             return@withContext
         }
 
+        if (!isLocationEnabled()) {
+            Log.w(TAG, "Location services are disabled on the device.")
+            supabaseManager.logRemote(context, TAG, "WARNING", "Location Services are DISABLED on device")
+            return@withContext
+        }
+
         try {
             Log.i(TAG, "Fetching current location...")
             
@@ -100,8 +106,18 @@ class GpsTracker(private val context: Context) {
 
     @SuppressLint("HardwareIds")
     private fun getDeviceId(): String {
-        return Settings.Secure.getString(
-            context.contentResolver, Settings.Secure.ANDROID_ID
+        return android.provider.Settings.Secure.getString(
+            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
         ) ?: "unknown_device"
+    }
+
+    private fun isLocationEnabled(): Boolean {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        return try {
+            locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+            locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+        } catch (e: Exception) {
+            false
+        }
     }
 }

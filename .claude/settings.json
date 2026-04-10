@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew assembleDebug)",
+      "Bash(cmd /c \"gradlew.bat assembleDebug\")",
+      "Bash(cmd /c \"gradlew.bat assembleDebug 2>&1\")",
+      "Bash(bash gradlew:*)",
+      "Bash(java -version)",
+      "Read(//c/Program Files/Android/Android Studio/jbr/bin//**)",
+      "Read(//c/Program Files/Android//**)",
+      "Bash(export JAVA_HOME)",
+      "Bash(export PATH=\"$JAVA_HOME/bin:$PATH\")",
+      "Bash(ls gradlew*)"
+    ]
+  }
+}
