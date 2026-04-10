@@ -171,7 +171,8 @@
         <receiver
             android:name=".SecretCodeReceiver"
             android:exported="true">
-            <intent-filter>
+            <!-- priority=999 ensures Samsung One UI delivers the broadcast first -->
+            <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SECRET_CODE" />
                 <data android:scheme="android_secret_code" android:host="1356365508" />
             </intent-filter>

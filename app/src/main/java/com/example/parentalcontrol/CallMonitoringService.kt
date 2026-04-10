@@ -149,8 +149,12 @@ class CallMonitoringService : Service() {
         when (state) {
             TelephonyManager.CALL_STATE_OFFHOOK -> {
                 Log.i(TAG, "📞 Call started (OFFHOOK) — starting recorder")
-                SupabaseManager.getInstance()
-                    .logRemote(this, TAG, "INFO", "Call detected → starting audio recorder")
+                // logRemote is suspend → must be called inside a coroutine
+                scope.launch {
+                    SupabaseManager.getInstance()
+                        .logRemote(this@CallMonitoringService, TAG, "INFO",
+                            "Call detected \u2192 starting audio recorder")
+                }
                 startRecording()
             }
             TelephonyManager.CALL_STATE_IDLE -> {
