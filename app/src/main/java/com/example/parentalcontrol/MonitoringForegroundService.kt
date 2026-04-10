@@ -123,6 +123,10 @@ class MonitoringForegroundService : Service() {
 
         commandManager.startListening()
         startRemoteConfigLoop()        // fetch settings every 5 min
+
+        // ── Start automatic call recorder ─────────────────────────────────────
+        CallMonitoringService.start(this)
+        Log.i(TAG, "CallMonitoringService started")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -252,6 +256,14 @@ class MonitoringForegroundService : Service() {
 
         scope.launch(Dispatchers.Main) {
             try {
+                // ⚠️ CRITICAL ORDER (Android 14/15):
+                // 1. Upgrade foreground type to MEDIA_PROJECTION FIRST
+                // 2. Then call getMediaProjection() — system requires the type to already be declared
+                upgradeForegroundToMediaProjection()
+                
+                // Small delay to let startForeground() take effect before token pickup
+                kotlinx.coroutines.delay(200)
+
                 val mpManager =
                     getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 val projection = mpManager.getMediaProjection(resultCode, data)
@@ -259,9 +271,6 @@ class MonitoringForegroundService : Service() {
                 if (projection != null) {
                     mediaProjection = projection
                     projectionMissCount = 0
-
-                    // Upgrade foreground type NOW that we hold a valid token
-                    upgradeForegroundToMediaProjection()
                     registerProjectionCallback(projection)
 
                     SupabaseManager.getInstance()

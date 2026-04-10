@@ -29,6 +29,7 @@ let heatmapVisible   = false;
 let usageChartInst   = null;
 let autoRefreshTimer = null;
 let logsRealtimeSub  = null;
+let realtimeChannels = {};   // keyed by deviceId
 
 // ═══════════════════════════════════════════════════════════
 //  INIT
@@ -152,6 +153,9 @@ async function selectDevice(deviceId, deviceData = null) {
 
     // Load current tab content
     await refreshCurrentData();
+    
+    // Subscribe to realtime updates for this device
+    subscribeToRealtimeUpdates(deviceId);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -174,6 +178,88 @@ function switchTab(tabId) {
     if (tabId === 'logs') subscribeToLogs();
 
     if (currentDeviceId) refreshCurrentData();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  REALTIME SUBSCRIPTIONS (Fix 3)
+// ═══════════════════════════════════════════════════════════
+function subscribeToRealtimeUpdates(deviceId) {
+    // Clean up any previous subscription for old device
+    const prev = realtimeChannels[deviceId];
+    if (prev) {
+        db.removeChannel(prev);
+        delete realtimeChannels[deviceId];
+    }
+
+    const channel = db
+        .channel(`device-updates-${deviceId}`)
+
+        // ── New screenshot/log entry → refresh Reports feed ──────────────
+        .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'remote_logs',
+            filter: `device_id=eq.${deviceId}`
+        }, (payload) => {
+            console.log('[Realtime] New log entry:', payload.new.message);
+
+            // Flash the logs nav badge
+            const logsBtn = document.getElementById('tab-btn-logs');
+            if (logsBtn && currentTab !== 'logs') {
+                logsBtn.style.color = '#f59e0b';
+                setTimeout(() => logsBtn.style.color = '', 2000);
+            }
+
+            // Live-prepend if on logs tab
+            if (currentTab === 'logs') {
+                const listEl = document.getElementById('logs-list');
+                const emptyEl = listEl?.querySelector('.empty-state');
+                if (emptyEl) emptyEl.remove();
+                const wrapper = document.createElement('div');
+                renderLogs([payload.new], wrapper);
+                if (wrapper.firstChild) listEl?.prepend(wrapper.firstChild);
+            }
+
+            // Refresh reports feed if on that tab
+            if (currentTab === 'reports') fetchReports();
+        })
+
+        // ── New notification → refresh Reports feed ──────────────────────
+        .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'notification_logs',
+            filter: `device_id=eq.${deviceId}`
+        }, () => {
+            if (currentTab === 'reports') fetchReports();
+        })
+
+        // ── New location → refresh map marker & last-seen ────────────────
+        .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'locations',
+            filter: `device_id=eq.${deviceId}`
+        }, (payload) => {
+            const loc = payload.new;
+            const batt  = loc.battery_level ?? 0;
+            const color = batt > 50 ? '#22c55e' : batt > 20 ? '#f59e0b' : '#ef4444';
+            document.getElementById('battery-text').innerText = `${batt}%`;
+            document.getElementById('battery-bar').style.cssText = `width:${batt}%;background:${color}`;
+            document.getElementById('last-seen-header').innerText = 'الآن';
+
+            const dot = document.getElementById('device-status-dot');
+            const txt = document.getElementById('device-status-text');
+            dot.className = 'status-dot online';
+            txt.innerText = 'متصل الآن';
+            txt.className = 'text-sm font-bold text-emerald-400';
+
+            // Update map if on track tab
+            if (currentTab === 'track' && mapInstance) fetchPositions();
+
+            showNotif(`📍 موقع جديد: ${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`, 'info');
+        })
+
+        .subscribe((status) => {
+            console.log(`[Realtime] Channel ${deviceId} status:`, status);
+        });
+
+    realtimeChannels[deviceId] = channel;
+    console.log(`[Realtime] Subscribed to device: ${deviceId}`);
 }
 
 // ═══════════════════════════════════════════════════════════

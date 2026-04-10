@@ -140,6 +140,10 @@ class ScreenCaptureEngine(private val context: Context) {
 
                 // ── Release VD immediately → Green Dot disappears ─────────────
                 vd.release()
+                
+                // Wait 1 second after VD release to ensure async upload initiates
+                // before any downstream projection.stop() is called
+                kotlinx.coroutines.delay(1_000)
 
                 if (image == null) {
                     Log.e(TAG, "No frame acquired")
