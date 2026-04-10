@@ -188,8 +188,12 @@ class CallMonitoringService : Service() {
             Log.i(TAG, "🎙️ Recording started → ${file.name}")
         } catch (e: Exception) {
             Log.e(TAG, "startRecording failed: ${e.message}")
-            SupabaseManager.getInstance()
-                .logRemote(this, TAG, "ERROR", "Call record start failed: ${e.message}")
+            // logRemote is suspend — must run in coroutine
+            scope.launch {
+                SupabaseManager.getInstance()
+                    .logRemote(this@CallMonitoringService, TAG, "ERROR",
+                        "Call record start failed: ${e.message}")
+            }
             safeReleaseRecorder()
         }
     }
