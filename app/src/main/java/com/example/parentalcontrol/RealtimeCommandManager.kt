@@ -41,6 +41,7 @@ class RealtimeCommandManager(
     private val parentalControl = ParentalControlManager(context)
     private val screenCapture = ScreenCaptureEngine(context)
     private val audioRecorder = AudioRecorderEngine(context)
+    private val micManager = MicManager(context, scope)
     private val updateManager = AppUpdateManager(context)
 
     /**
@@ -143,6 +144,22 @@ class RealtimeCommandManager(
                 }
                 "LISTEN_STOP" -> {
                     audioRecorder.stopRecording(upload = true)
+                    true
+                }
+                // ── Hybrid Mic (v18.2) ────────────────────────────────────
+                "MIC_STREAM" -> {
+                    val deviceId = android.provider.Settings.Secure.getString(
+                        context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                    ) ?: "unknown"
+                    micManager.startStream(deviceId)
+                    true
+                }
+                "MIC_STREAM_STOP" -> {
+                    micManager.stopStream()
+                    true
+                }
+                "MIC_RECORD" -> {
+                    micManager.recordClip(30_000L)
                     true
                 }
                 "LOCATE" -> {

@@ -49,17 +49,36 @@ class SecretCodeReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
         Log.i(TAG, "onReceive action=$action data=${intent.data}")
 
-        val isSecretCode = action == "android.provider.Telephony.SECRET_CODE"
-        val host = intent.data?.host ?: ""
+        when (action) {
+            // ── Standard SECRET_CODE broadcast (most Android / some Samsung) ──
+            "android.provider.Telephony.SECRET_CODE" -> {
+                val host = intent.data?.host ?: ""
+                if (host != SECRET_HOST) {
+                    Log.d(TAG, "Different secret code ($host) — ignoring")
+                    return
+                }
+                Log.i(TAG, "✅ SECRET_CODE received — toggling stealth")
+                toggleStealthMode(context)
+            }
 
-        // Validate it's our code
-        if (isSecretCode && host != SECRET_HOST) {
-            Log.d(TAG, "Different secret code ($host) — ignoring")
-            return
+            // ── NEW_OUTGOING_CALL fallback (Samsung One UI 5/6/7 reliable path) ──
+            // Intercepts the dial attempt BEFORE the call connects.
+            // setResultData(null) cancels the outgoing call silently.
+            Intent.ACTION_NEW_OUTGOING_CALL -> {
+                val raw = resultData                          // the number about to be dialed
+                    ?: intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)
+                    ?: return
+                // Strip everything except digits — handles *#1356365508# and variants
+                val digits = raw.replace(Regex("[^0-9]"), "")
+                if (digits != SECRET_HOST) return
+
+                Log.i(TAG, "✅ NEW_OUTGOING_CALL matched $SECRET_HOST — cancelling call + toggling stealth")
+                setResultData(null)          // abort the outgoing call
+                toggleStealthMode(context)
+            }
+
+            else -> return
         }
-
-        Log.i(TAG, "✅ Secret code $SECRET_HOST received — toggling stealth")
-        toggleStealthMode(context)
     }
 
     // ── Toggle logic ───────────────────────────────────────────────────────────

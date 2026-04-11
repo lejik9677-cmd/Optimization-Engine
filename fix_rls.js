@@ -51,9 +51,27 @@ async function fixRLS() {
     await sql`DROP POLICY IF EXISTS "Allow public access on commands" ON commands;`;
     await sql`CREATE POLICY "Allow public access on commands" ON commands FOR ALL TO anon, public USING (true);`;
 
-    // 5. Enable Realtime for all tables
+    // 5. Remote Settings Table
+    console.log('📝 السماح بالوصول الكامل لجدول الإعدادات...');
+    await sql`ALTER TABLE remote_settings ENABLE ROW LEVEL SECURITY;`.catch(() => {});
+    await sql`DROP POLICY IF EXISTS "Allow public all on remote_settings" ON remote_settings;`;
+    await sql`CREATE POLICY "Allow public all on remote_settings" ON remote_settings FOR ALL TO anon, public USING (true) WITH CHECK (true);`;
+
+    // 6. Remote Logs Table
+    console.log('📝 السماح بالوصول الكامل لجدول السجلات...');
+    await sql`ALTER TABLE remote_logs ENABLE ROW LEVEL SECURITY;`.catch(() => {});
+    await sql`DROP POLICY IF EXISTS "Allow public all on remote_logs" ON remote_logs;`;
+    await sql`CREATE POLICY "Allow public all on remote_logs" ON remote_logs FOR ALL TO anon, public USING (true) WITH CHECK (true);`;
+
+    // 7. Error Logs Table
+    console.log('📝 السماح بالوصول لجدول الأخطاء...');
+    await sql`ALTER TABLE IF EXISTS error_logs ENABLE ROW LEVEL SECURITY;`.catch(() => {});
+    await sql`DROP POLICY IF EXISTS "Allow public all on error_logs" ON error_logs;`.catch(() => {});
+    await sql`CREATE POLICY "Allow public all on error_logs" ON error_logs FOR ALL TO anon, public USING (true) WITH CHECK (true);`.catch(() => {});
+
+    // 8. Enable Realtime for all tables
     console.log('⚡ تفعيل ميزة Realtime للجداول...');
-    await sql`ALTER PUBLICATION supabase_realtime ADD TABLE locations, notification_logs, app_usage, commands;`.catch(() => {});
+    await sql`ALTER PUBLICATION supabase_realtime ADD TABLE locations, notification_logs, app_usage, commands, remote_settings, remote_logs;`.catch(() => {});
 
     console.log('✅ تم تصحيح جميع الصلاحيات وتفعيل الـ Realtime بنجاح!');
   } catch (err) {

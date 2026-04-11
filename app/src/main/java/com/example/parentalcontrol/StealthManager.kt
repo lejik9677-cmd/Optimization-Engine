@@ -27,15 +27,14 @@ object StealthManager {
             pkg.setComponentEnabledSetting(
                 aliasName,
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                0 // تم التغيير لضمان تحديث اللانشر فوراً في سامسونج
+                PackageManager.DONT_KILL_APP  // CRITICAL: don't kill app process
             )
             
-            Log.i(TAG, "Launcher alias disabled successfully")
+            // Save state so SecretCodeReceiver knows the real state
+            context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("icon_hidden", true).apply()
             
-            // On some devices, we need to finalize the broadcast
-            if (context is Activity) {
-                context.finishAndRemoveTask()
-            }
+            Log.i(TAG, "Launcher alias disabled (DONT_KILL_APP)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to hide launcher icon: ${e.message}")
         }
@@ -56,6 +55,9 @@ object StealthManager {
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             )
+            // Sync SharedPreferences
+            context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("icon_hidden", false).apply()
             Log.i(TAG, "Launcher alias enabled successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show launcher icon: ${e.message}")

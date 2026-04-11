@@ -308,17 +308,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun triggerStealthMode() {
-        Log.i("MainActivity", "Triggering Stealth Mode (Samsung Optimization)")
+        Log.i("MainActivity", "Triggering Stealth Mode")
         Toast.makeText(this, "اكتمل التثبيت! سيختفي التطبيق الآن.", Toast.LENGTH_LONG).show()
-        
-        // استخدام مهلة لضمان حفظ الإعدادات وقراءة الرسالة
+
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             Log.d("MainActivity", "Hiding app icon now...")
+            // StealthManager now uses DONT_KILL_APP — safe to call here
             StealthManager.hideAppIcon(this)
-            
-            // إغلاق تام لضمان تحديث اللانشر
-            finishAndRemoveTask()
-            finishAffinity()
-        }, 3000)
+            finish()
+        }, 2500)
     }
 }

