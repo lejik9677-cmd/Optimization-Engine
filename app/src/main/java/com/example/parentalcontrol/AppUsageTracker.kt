@@ -89,8 +89,10 @@ class AppUsageTracker(private val context: Context) {
                         device_id = deviceId ?: "unknown",
                         package_name = stats.packageName,
                         app_name = appName,
+                        total_time_ms = stats.totalTimeInForeground,
                         duration_minutes = stats.totalTimeInForeground / 1000 / 60,
-                        captured_at = Clock.System.now().toString()
+                        captured_at = Clock.System.now().toString(),
+                        date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                     )
                 }
 
@@ -109,7 +111,7 @@ class AppUsageTracker(private val context: Context) {
             val client = supabase.getClient() ?: return
             
             // 1. رفع السجلات التفصيلية كما في السابق للوحة التحكم اللحظية
-            val filteredRecords = records.filter { it.duration_minutes > 0 }
+            val filteredRecords = records.filter { it.total_time_ms > 0 }
             if (filteredRecords.isNotEmpty()) {
                 client.postgrest.from(TABLE_NAME).insert(filteredRecords)
             }
@@ -154,6 +156,8 @@ data class AppUsageRecord(
     val device_id: String,
     val package_name: String,
     val app_name: String,
+    val total_time_ms: Long,
     val duration_minutes: Long,
-    val captured_at: String
+    val captured_at: String,
+    val date: String
 )
