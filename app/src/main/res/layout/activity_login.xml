@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#0F172A"
@@ -8,39 +7,29 @@
     android:orientation="vertical"
     android:padding="32dp">
 
-    <ImageView
-        android:layout_width="80dp"
-        android:layout_height="80dp"
-        android:src="@drawable/ic_shield"
-        app:tint="#3B82F6"
-        android:layout_marginBottom="24dp" />
-
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="حماية الوصول"
-        android:textColor="#FFFFFF"
-        android:textSize="24sp"
-        android:textStyle="bold" />
+        android:text="Sync Service"
+        android:textColor="#3B82F6"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="أدخل رمز PIN للمتابعة"
         android:textColor="#94A3B8"
-        android:layout_marginTop="8dp" />
+        android:textSize="14sp"
+        android:layout_marginBottom="32dp" />
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/tilPin"
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
-        android:textColorHint="#64748B"
-        app:boxStrokeColor="#3B82F6"
-        app:hintTextColor="#3B82F6"
-        app:passwordToggleEnabled="true"
-        app:passwordToggleTint="#94A3B8">
+        android:layout_marginBottom="24dp">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etPin"
@@ -49,18 +38,17 @@
             android:hint="رمز PIN"
             android:imeOptions="actionDone"
             android:inputType="numberPassword"
-            android:textColor="#FFFFFF" />
+            android:textColor="#FFFFFF"
+            android:textColorHint="#64748B" />
     </com.google.android.material.textfield.TextInputLayout>
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/btnLogin"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:layout_marginTop="24dp"
-        android:backgroundTint="#3B82F6"
-        android:text="دخول آمن"
+        android:text="دخول"
         android:textColor="#FFFFFF"
-        android:textStyle="bold"
-        app:cornerRadius="12dp" />
+        android:textSize="16sp"
+        android:backgroundTint="#3B82F6" />
 
 </LinearLayout>
