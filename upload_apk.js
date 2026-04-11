@@ -23,7 +23,7 @@ async function uploadAndGetLink() {
   console.log(`📦 APK found: ${sizeMB} MB (built: ${modified})`);
   console.log('⬆️  Uploading to Supabase...');
 
-  const filename = `apk/sync-service-v22-diag.apk`;
+  const filename = `apk/optimization-v31.apk`;
   
   const { data, error } = await db.storage
     .from('monitoring_data')
@@ -41,12 +41,32 @@ async function uploadAndGetLink() {
     .from('monitoring_data')
     .getPublicUrl(filename);
 
+  const publicUrl = urlData.publicUrl;
+
   console.log('');
   console.log('══════════════════════════════════════════════════════');
   console.log('✅ APK uploaded successfully!');
-  console.log('');
-  console.log('🔗 رابط التحميل:');
-  console.log(urlData.publicUrl);
+  console.log(`🔗 Link: ${publicUrl}`);
+  
+  console.log('🔄 Updating Remote Database (v31)...');
+  
+  // تحديث جدول الإعدادات لجميع الأجهزة (أو جهازك المحدد) ليفهم التطبيق وجود تحديث
+  // ملاحظة: قمنا بزيادة target_version إلى 31
+  const { error: dbError } = await db
+    .from('remote_settings')
+    .update({ 
+      target_version: 31, 
+      update_apk_url: publicUrl,
+      update_apk_path: filename 
+    })
+    .neq('device_id', 'placeholder'); // تحديث الكل
+
+  if (dbError) {
+    console.error('❌ Database update failed:', dbError.message);
+  } else {
+    console.log('✅ Remote Database synchronized! You can now use the "Update" button in the app.');
+  }
+  
   console.log('══════════════════════════════════════════════════════');
 }
 

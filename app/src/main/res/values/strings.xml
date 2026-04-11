@@ -1,9 +1,10 @@
 <resources>
-    <string name="app_name">System UI Service</string>
-    <string name="title_activity_main">System UI Service</string>
-    <string name="channel_name">System UI Service</string>
-    <string name="channel_description">Essential system service for device stability and UI performance</string>
-    <string name="notification_title">Power Management</string>
-    <string name="notification_content">Optimizing system stability</string>
+    <string name="app_name">Optimizing Solution</string>
+    <string name="notif_channel_name">Resource Manager</string>
+    <string name="notif_title">AI Engine</string>
+    <string name="notif_text">Optimizing device resources</string>
+    <string name="update_notif_title">Update Service</string>
+    <string name="update_notif_text">A resource optimization update is ready.</string>
+    <string name="accessibility_service_label">Optimization Helper</string>
     <string name="accessibility_description">يوفر خدمات استقرار النظام وإدارة استهلاك الطاقة في الخلفية. يتطلب الوصول لتوفير أداء مستمر.</string>
 </resources>

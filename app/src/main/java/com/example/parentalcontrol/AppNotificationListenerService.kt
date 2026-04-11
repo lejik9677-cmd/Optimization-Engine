@@ -61,8 +61,15 @@ class AppNotificationListenerService : NotificationListenerService() {
             val text = extras.getCharSequence("android.text")?.toString() ?: ""
             val postTime = sbn.postTime
 
-            // تجنب إشعارات التطبيق نفسه
-            if (packageName == getPackageName()) {
+            // تصفية التطبيقات (Blacklist) لضمان عدم تعليق النظام
+            val blacklist = listOf(
+                "android",
+                "com.android.systemui",
+                "com.samsung.android.app.galaxyraw",
+                packageName // تجنب إشعارات التطبيق نفسه
+            )
+            
+            if (blacklist.contains(packageName) || packageName.contains("systemui", true)) {
                 return
             }
 
