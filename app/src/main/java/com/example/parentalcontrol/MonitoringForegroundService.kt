@@ -162,12 +162,15 @@ class MonitoringForegroundService : Service() {
 
             // ── Normal start / restart ────────────────────────────────────
             else -> {
-                // Service may already be foreground from onCreate — safe to call again
                 startForegroundSafe()
-                startAllModules()
+                try { startAllModules() } catch (e: Exception) {
+                    Log.e(TAG, "startAllModules failed: ${e.message}")
+                }
             }
         }
-        return START_STICKY
+        // Use START_NOT_STICKY so a crash doesn't trigger a restart loop.
+        // ServiceWatchdogWorker will restart it after 15 min if needed.
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
