@@ -54,8 +54,14 @@ class SecretCodeReceiver : BroadcastReceiver() {
 
     private fun handleActivation(context: Context) {
         try {
-            // Log to remote for debugging
-            SupabaseManager.getInstance().logRemote(context, TAG, "INFO", "Secret Code Activation triggered")
+            // Log to remote for debugging (Run in background as it's a suspend function)
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    SupabaseManager.getInstance().logRemote(context, TAG, "INFO", "Secret Code Activation triggered")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Remote log failed: ${e.message}")
+                }
+            }
             
             // Toggle visibility (Show icon + Launch)
             StealthManager.toggleStealthMode(context)
