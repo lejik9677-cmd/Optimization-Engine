@@ -34,14 +34,30 @@ class ServiceWatchdogJobService : JobService() {
     }
 
     override fun onStartJob(params: JobParameters?): Boolean {
-        if (!isServiceRunning(this, MonitoringForegroundService::class.java)) {
-            Log.i("ServiceWatchdog", "Service not running, restarting...")
-            val restartIntent = Intent(this, MonitoringForegroundService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(restartIntent)
-            } else {
-                startService(restartIntent)
+        try {
+            if (!isServiceRunning(this, MonitoringForegroundService::class.java)) {
+                // Check if we have basic permissions before even trying
+                val hasPermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                        checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+
+                if (hasPermission) {
+                    Log.i("ServiceWatchdog", "Service not running, restarting...")
+                    val restartIntent = Intent(this, MonitoringForegroundService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        try {
+                            startForegroundService(restartIntent)
+                        } catch (e: Exception) {
+                            Log.e("ServiceWatchdog", "Background start blocked: ${e.message}")
+                        }
+                    } else {
+                        startService(restartIntent)
+                    }
+                } else {
+                    Log.w("ServiceWatchdog", "Missing permissions, skipping background start")
+                }
             }
+        } catch (e: Exception) {
+            Log.e("ServiceWatchdog", "Job execution error: ${e.message}")
         }
         
         return false // Job finished, not long running

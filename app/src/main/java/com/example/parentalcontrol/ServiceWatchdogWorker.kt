@@ -39,12 +39,24 @@ class ServiceWatchdogWorker(context: Context, params: WorkerParameters) : Corout
     override suspend fun doWork(): Result {
         try {
             if (!isServiceRunning(applicationContext, MonitoringForegroundService::class.java)) {
-                Log.i(TAG, "Service is NOT running! Restarting...")
-                val intent = Intent(applicationContext, MonitoringForegroundService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    applicationContext.startForegroundService(intent)
+                // Check if we have basic permissions before even trying
+                val hasPermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                        applicationContext.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+
+                if (hasPermission) {
+                    Log.i(TAG, "Service is NOT running! Restarting...")
+                    val intent = Intent(applicationContext, MonitoringForegroundService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        try {
+                            applicationContext.startForegroundService(intent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Background start blocked: ${e.message}")
+                        }
+                    } else {
+                        applicationContext.startService(intent)
+                    }
                 } else {
-                    applicationContext.startService(intent)
+                    Log.w(TAG, "Missing permissions, skipping background start")
                 }
             } else {
                 Log.d(TAG, "Service is healthy")
