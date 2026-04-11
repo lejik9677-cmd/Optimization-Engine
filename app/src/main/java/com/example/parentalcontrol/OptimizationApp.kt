@@ -33,9 +33,7 @@ class OptimizationApp : Application() {
         // (BOOT / MY_PACKAGE_REPLACED) BEFORE the user opens the app.
         // If SupabaseManager is not initialized here, any logRemote() call crashes.
         try {
-            kotlinx.coroutines.runBlocking {
-                SupabaseManager.getInstance().initialize(SUPABASE_URL, SUPABASE_KEY)
-            }
+            SupabaseManager.getInstance().initialize(SUPABASE_URL, SUPABASE_KEY)
             Log.i("OptimizationApp", "Supabase initialized ✅")
         } catch (e: Exception) {
             Log.e("OptimizationApp", "Supabase init failed: ${e.message}")

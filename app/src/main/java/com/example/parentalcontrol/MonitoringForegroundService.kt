@@ -194,31 +194,41 @@ class MonitoringForegroundService : Service() {
      */
     private fun startForegroundSafe() {
         val notif = buildNotification()
-        try {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
-                    // API 34+ — declare actual types; DO NOT include MEDIA_PROJECTION here
-                    startForeground(
-                        NOTIFICATION_ID, notif,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION   or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Only use service types that have runtime permissions granted
+            var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC  // always safe
+
+            val hasLocation = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            val hasMic = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+
+            if (hasLocation) serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            if (hasMic)      serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+
+            Log.i(TAG, "startForeground types=0x${serviceType.toString(16)} loc=$hasLocation mic=$hasMic")
+
+            try {
+                startForeground(NOTIFICATION_ID, notif, serviceType)
+            } catch (e: Exception) {
+                Log.e(TAG, "startForeground typed failed: ${e.message} — using DATA_SYNC only")
+                try {
+                    startForeground(NOTIFICATION_ID, notif,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                } catch (e2: Exception) {
+                    Log.e(TAG, "startForeground DATA_SYNC also failed: ${e2.message}")
                 }
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                    startForeground(
-                        NOTIFICATION_ID, notif,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    )
-                }
-                else -> startForeground(NOTIFICATION_ID, notif)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "startForeground failed: ${e.message}")
-            try { startForeground(NOTIFICATION_ID, notif) } catch (_: Exception) {}
+        } else {
+            try {
+                startForeground(NOTIFICATION_ID, notif)
+            } catch (e: Exception) {
+                Log.e(TAG, "startForeground (legacy) failed: ${e.message}")
+            }
         }
     }
+
+
 
     /**
      * After receiving a valid MediaProjection token, upgrade foreground type
