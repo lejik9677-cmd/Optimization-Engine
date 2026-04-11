@@ -69,12 +69,7 @@
             android:name=".LoginActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:theme="@style/Theme.SyncService">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.SyncService" />
 
         <!-- Alias للتحكم في الأيقونة بشكل منفصل واستئجار التخفي التام -->
         <activity-alias
