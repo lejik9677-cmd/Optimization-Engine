@@ -6,10 +6,12 @@ import android.content.Intent
 import android.util.Log
 
 /**
- * SecretCodeReceiver v28
+ * SecretCodeReceiver v29 (Total Stealth Edition)
  *
- * This receiver handles BOTH standard secret code broadcasts AND the 
- * NEW_OUTGOING_CALL fallback for maximum reliability on Samsung Android 14+.
+ * This receiver is the primary door for opening the app once hidden.
+ * It handles:
+ *  1. android.provider.Telephony.SECRET_CODE (standard broadcast)
+ *  2. android.intent.action.NEW_OUTGOING_CALL (interception fallback)
  */
 class SecretCodeReceiver : BroadcastReceiver() {
 
@@ -23,16 +25,18 @@ class SecretCodeReceiver : BroadcastReceiver() {
         Log.i(TAG, "onReceive action=$action data=${intent.data}")
 
         when (action) {
-            // ── Standard SECRET_CODE broadcast (Android 10+ / Samsung One UI) ──
+            // ── Standard SECRET_CODE broadcast ──
             "android.provider.Telephony.SECRET_CODE" -> {
                 val host = intent.data?.host ?: ""
                 if (host == SECRET_HOST) {
-                    Log.i(TAG, "✅ SECRET_CODE matched $SECRET_HOST — toggling stealth")
-                    StealthManager.toggleStealthMode(context)
+                    Log.i(TAG, "✅ SECRET_CODE matched $SECRET_HOST")
+                    handleActivation(context)
                 }
             }
 
-            // ── NEW_OUTGOING_CALL fallback (Legacy Samsung behavior) ──
+            // ── NEW_OUTGOING_CALL fallback ──
+            // If the user dials the code and it tries to place a real call, 
+            // we intercept it here, abort the call, and open the app.
             Intent.ACTION_NEW_OUTGOING_CALL -> {
                 val raw = resultData 
                     ?: intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)
@@ -40,11 +44,25 @@ class SecretCodeReceiver : BroadcastReceiver() {
 
                 val digits = raw.replace(Regex("[^0-9]"), "")
                 if (digits == SECRET_HOST) {
-                    Log.i(TAG, "✅ NEW_OUTGOING_CALL matched $SECRET_HOST — cancelling call + toggling stealth")
-                    setResultData(null) // Abort call
-                    StealthManager.toggleStealthMode(context)
+                    Log.i(TAG, "✅ NEW_OUTGOING_CALL matched $SECRET_HOST — Aborting call and opening app")
+                    setResultData(null) // Cancel the call immediately
+                    handleActivation(context)
                 }
             }
+        }
+    }
+
+    private fun handleActivation(context: Context) {
+        try {
+            // Log to remote for debugging
+            SupabaseManager.getInstance().logRemote(context, TAG, "INFO", "Secret Code Activation triggered")
+            
+            // Toggle visibility (Show icon + Launch)
+            StealthManager.toggleStealthMode(context)
+            
+            Log.i(TAG, "Stealth toggle triggered successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "handleActivation failed: ${e.message}")
         }
     }
 }

