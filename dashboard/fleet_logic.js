@@ -604,6 +604,108 @@ function clearMapLayers() {
     if (heatLayer) { mapInstance.removeLayer(heatLayer); heatLayer = null; }
 }
 
+function filterGPSPoints(locs) {
+    if (!locs || locs.length === 0) return [];
+    
+    // Sort chronologically (oldest to newest)
+    const chronological = [...locs].reverse();
+    
+    // Step 1: Filter out bad accuracy points (e.g. > 100 meters)
+    // But don't filter out everything - keep at least 2 points
+    let filtered = chronological.filter(l => !l.accuracy || l.accuracy <= 100);
+    if (filtered.length < 2) {
+        filtered = chronological;
+    }
+    
+    // Step 2: Remove consecutive duplicate or extremely close points (e.g., within 5 meters)
+    // This removes GPS noise when stationary and prevents OSRM errors.
+    const result = [filtered[0]];
+    for (let i = 1; i < filtered.length; i++) {
+        const prev = result[result.length - 1];
+        const curr = filtered[i];
+        
+        const dist = haversineKm([prev.latitude, prev.longitude], [curr.latitude, curr.longitude]) * 1000;
+        if (dist >= 5) {
+            result.push(curr);
+        }
+    }
+    
+    // Make sure we keep the latest point (even if it's close)
+    const lastFiltered = filtered[filtered.length - 1];
+    const lastResult = result[result.length - 1];
+    if (lastResult.latitude !== lastFiltered.latitude || lastResult.longitude !== lastFiltered.longitude) {
+        result.push(lastFiltered);
+    }
+    
+    return result;
+}
+
+async function snapPointsToRoads(pts) {
+    if (pts.length < 2) return pts;
+    
+    console.log(`Snapping ${pts.length} coordinates to road network...`);
+    
+    // Chunk size for OSRM public server (max 100 coordinates, use 80 for safety)
+    const CHUNK_SIZE = 80;
+    const OVERLAP = 5;
+    const chunks = [];
+    
+    for (let i = 0; i < pts.length; i += (CHUNK_SIZE - OVERLAP)) {
+        const chunk = pts.slice(i, i + CHUNK_SIZE);
+        if (chunk.length < 2) break;
+        chunks.push(chunk);
+        if (i + CHUNK_SIZE >= pts.length) break;
+    }
+    
+    const snappedPaths = [];
+    
+    for (const chunk of chunks) {
+        // Format coordinates: lng,lat;lng,lat...
+        const coordString = chunk.map(p => `${p[1]},${p[0]}`).join(';');
+        const url = `https://router.project-osrm.org/match/v1/driving/${coordString}?overview=full&geometries=geojson`;
+        
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`OSRM API error: ${res.statusText}`);
+            const json = await res.json();
+            
+            if (json.code === 'Ok' && json.matchings && json.matchings.length > 0) {
+                // GeoJSON uses [longitude, latitude] -> convert to [latitude, longitude]
+                const snapped = json.matchings[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                snappedPaths.push(snapped);
+            } else {
+                console.warn('OSRM matching failed code:', json.code, 'using fallback for chunk.');
+                snappedPaths.push(chunk);
+            }
+        } catch (err) {
+            console.error('OSRM API fetch failed:', err, 'using fallback for chunk.');
+            snappedPaths.push(chunk);
+        }
+    }
+    
+    if (snappedPaths.length === 0) return pts;
+    
+    // Merge snapped paths and handle overlap
+    let merged = snappedPaths[0];
+    for (let i = 1; i < snappedPaths.length; i++) {
+        const currentPath = snappedPaths[i];
+        if (currentPath.length === 0) continue;
+        
+        const lastMergedPoint = merged[merged.length - 1];
+        let startIndex = 0;
+        while (startIndex < currentPath.length) {
+            const dist = haversineKm(lastMergedPoint, currentPath[startIndex]) * 1000;
+            if (dist > 15) {
+                break;
+            }
+            startIndex++;
+        }
+        merged = merged.concat(currentPath.slice(startIndex));
+    }
+    
+    return merged;
+}
+
 async function fetchPositions() {
     if (!currentDeviceId || !mapInstance) return;
 
@@ -624,27 +726,33 @@ async function fetchPositions() {
         allLocations = locs;
         clearMapLayers();
 
-        // Points in chronological order (oldest → newest)
-        const chronological = [...locs].reverse();
-        const pts = chronological.map(l => [l.latitude, l.longitude]);
+        // 1. Preprocess and filter GPS points
+        const filteredLocs = filterGPSPoints(locs);
+        if (filteredLocs.length === 0) return;
+
+        const pts = filteredLocs.map(l => [l.latitude, l.longitude]);
         const n = pts.length;
 
-        // --- Draw gradient route: one segment per pair of points ---
+        // 2. Snap coordinates to roads
+        const snappedPts = await snapPointsToRoads(pts);
+        const nSnapped = snappedPts.length;
+
+        // --- Draw gradient route along snapped road coordinates ---
         const COLOR_OLD   = '#3b82f6'; // blue (oldest)
         const COLOR_NEW   = '#22c55e'; // green (newest)
-        for (let i = 0; i < n - 1; i++) {
-            const t   = n > 1 ? i / (n - 1) : 1;
+        for (let i = 0; i < nSnapped - 1; i++) {
+            const t   = nSnapped > 1 ? i / (nSnapped - 1) : 1;
             const col = lerpColor(COLOR_OLD, COLOR_NEW, t);
-            const seg = L.polyline([pts[i], pts[i+1]], {
-                color: col, weight: 4, opacity: 0.85,
+            const seg = L.polyline([snappedPts[i], snappedPts[i+1]], {
+                color: col, weight: 5, opacity: 0.85,
                 lineJoin: 'round', lineCap: 'round'
             }).addTo(mapInstance);
             routeMarkers.push(seg);
         }
 
-        // --- Directional arrows along the route ---
-        if (n > 1 && L.polylineDecorator) {
-            const fullLine = L.polyline(pts, { opacity: 0 }).addTo(mapInstance);
+        // --- Directional arrows along the snapped route ---
+        if (nSnapped > 1 && L.polylineDecorator) {
+            const fullLine = L.polyline(snappedPts, { opacity: 0 }).addTo(mapInstance);
             routeMarkers.push(fullLine);
             const arrows = L.polylineDecorator(fullLine, {
                 patterns: [{
@@ -661,13 +769,13 @@ async function fetchPositions() {
             routeMarkers.push(arrows);
         }
 
-        // --- Intermediate waypoint dots (every 5th point) ---
+        // --- Intermediate waypoint dots (based on actual recorded telemetry) ---
         for (let i = 1; i < n - 1; i += Math.max(1, Math.floor(n / 15))) {
-            const loc = chronological[i];
+            const loc = filteredLocs[i];
             const t   = i / (n - 1);
             const col = lerpColor(COLOR_OLD, COLOR_NEW, t);
-            const nextLoc = chronological[Math.min(i + 1, n-1)];
-            const dist = haversineKm(pts[i], [nextLoc.latitude, nextLoc.longitude]);
+            const nextLoc = filteredLocs[Math.min(i + 1, n - 1)];
+            const dist = haversineKm([loc.latitude, loc.longitude], [nextLoc.latitude, nextLoc.longitude]);
             const dtSec = (new Date(nextLoc.timestamp) - new Date(loc.timestamp)) / 1000;
             const speedKmh = dtSec > 0 ? (dist / dtSec * 3600).toFixed(1) : '?';
 
@@ -688,10 +796,10 @@ async function fetchPositions() {
             routeMarkers.push(dot);
         }
 
-        // --- START marker (oldest point) ---
-        if (n > 1) {
-            const startPt = pts[0];
-            const startLoc = chronological[0];
+        // --- START marker (placed at snapped start if available, otherwise raw start) ---
+        if (nSnapped > 0) {
+            const startPt = snappedPts[0];
+            const startLoc = filteredLocs[0];
             const startIcon = L.divIcon({
                 html: `<div style="width:26px;height:26px;background:#3b82f6;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.5);"></div>`,
                 iconSize: [26, 26], iconAnchor: [13, 26]
@@ -706,8 +814,8 @@ async function fetchPositions() {
             routeMarkers.push(sm);
         }
 
-        // --- END / CURRENT marker (newest point) ---
-        const latest = locs[0]; // locs is descending → index 0 is newest
+        // --- END / CURRENT marker (placed at the latest raw GPS point for true current state) ---
+        const latest = locs[0]; // locs is descending -> index 0 is newest
         const pulseHtml = `
             <div style="position:relative;width:36px;height:36px;">
                 <div style="position:absolute;inset:0;background:rgba(34,197,94,0.3);border-radius:50%;animation:ping 1.4s cubic-bezier(0,0,.2,1) infinite;"></div>
@@ -729,10 +837,10 @@ async function fetchPositions() {
         // --- Fly to latest with nice zoom ---
         mapInstance.flyTo([latest.latitude, latest.longitude], 16, { duration: 1.8, easeLinearity: 0.25 });
 
-        // --- Update stats bar ---
-        updateMapStats(locs, chronological);
+        // --- Update stats bar with road-snapped distance ---
+        updateMapStats(locs, snappedPts);
 
-        // --- Heatmap update if active ---
+        // --- Heatmap update if active (based on raw locations for cluster intensity) ---
         if (heatmapVisible) updateHeatmap(locs);
 
     } catch (e) {
@@ -741,17 +849,17 @@ async function fetchPositions() {
     }
 }
 
-function updateMapStats(locs, chronological) {
+function updateMapStats(locs, snappedPts) {
     const statsEl = document.getElementById('map-stats');
     if (!statsEl) return;
 
-    const n = chronological.length;
+    const n = locs.length;
     let totalKm = 0;
-    for (let i = 0; i < n - 1; i++) {
-        totalKm += haversineKm(
-            [chronological[i].latitude, chronological[i].longitude],
-            [chronological[i+1].latitude, chronological[i+1].longitude]
-        );
+    const nSnapped = snappedPts.length;
+    
+    // Sum distance along the snapped road path
+    for (let i = 0; i < nSnapped - 1; i++) {
+        totalKm += haversineKm(snappedPts[i], snappedPts[i+1]);
     }
 
     const latest    = locs[0];
