@@ -1042,7 +1042,7 @@ async function stopLiveMic() {
  * Chunks arrive every ~200 ms; we schedule them sequentially on a timeline
  * to avoid gaps and clicks.
  */
-function _playPCMChunk(base64Data) {
+async function _playPCMChunk(base64Data) {
     if (!liveMicAudioCtx || !isLiveMicActive) return;
 
     // First chunk received! Update UI to "Connected"
