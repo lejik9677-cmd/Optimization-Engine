@@ -524,6 +524,15 @@
                     <div id="map" class="h-full w-full"></div>
                     <!-- Map Controls Overlay -->
                     <div class="absolute top-4 right-4 z-[1000] flex flex-col gap-2">
+                        <!-- Date Picker Control -->
+                        <div class="flex flex-col gap-1 p-2 rounded-xl" 
+                             style="background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.1); box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+                            <span class="text-[10px] text-slate-400 font-bold text-center block mb-1">📅 اختر تاريخ المسار</span>
+                            <input type="date" id="route-date-picker" onchange="fetchPositions()" 
+                                   class="text-xs text-white px-2 py-1.5 rounded bg-slate-800 border border-slate-700 outline-none cursor-pointer text-center"
+                                   style="color-scheme:dark; width:140px;">
+                        </div>
+
                         <button onclick="toggleHeatmap()" id="heatmap-toggle"
                             class="btn-action btn-primary text-xs shadow-2xl">
                             🌡️ Heatmap تفعيل

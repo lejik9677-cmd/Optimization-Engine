@@ -604,6 +604,49 @@ function clearMapLayers() {
     if (heatLayer) { mapInstance.removeLayer(heatLayer); heatLayer = null; }
 }
 
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `fixed bottom-24 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-2xl text-xs font-black text-white shadow-2xl z-[9999] transition-all duration-300 opacity-0 translate-y-2 flex items-center gap-2`;
+    
+    if (type === 'error') {
+        toast.style.background = 'rgba(239, 68, 68, 0.95)';
+        toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+        toast.innerHTML = `⚠️ <span>${message}</span>`;
+    } else if (type === 'success') {
+        toast.style.background = 'rgba(34, 197, 94, 0.95)';
+        toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+        toast.innerHTML = `✅ <span>${message}</span>`;
+    } else {
+        toast.style.background = 'rgba(30, 41, 59, 0.95)';
+        toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+        toast.innerHTML = `ℹ️ <span>${message}</span>`;
+    }
+    
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.classList.remove('opacity-0', 'translate-y-2');
+        toast.classList.add('opacity-100', 'translate-y-0');
+    }, 10);
+    
+    setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+    }, 3500);
+}
+
+function initRouteDatePicker() {
+    const picker = document.getElementById('route-date-picker');
+    if (picker && !picker.value) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        picker.value = `${yyyy}-${mm}-${dd}`;
+    }
+}
+
 function filterGPSPoints(locs) {
     if (!locs || locs.length === 0) return [];
     
@@ -714,14 +757,47 @@ async function fetchPositions() {
     if (refreshBtn) { refreshBtn.innerText = '⏳ جاري...'; refreshBtn.disabled = true; }
 
     try {
-        const { data: locs } = await db.from('locations')
+        // Ensure date picker is initialized to today
+        initRouteDatePicker();
+        
+        const datePicker = document.getElementById('route-date-picker');
+        let query = db.from('locations')
             .select('latitude, longitude, accuracy, timestamp, battery_level')
             .eq('device_id', currentDeviceId)
-            .order('timestamp', { ascending: false })
-            .limit(200);
+            .order('timestamp', { ascending: false });
+
+        if (datePicker && datePicker.value) {
+            const dateStr = datePicker.value;
+            // Get local day bounds, convert to ISO UTC for database query
+            const startDate = new Date(dateStr + 'T00:00:00');
+            const endDate = new Date(dateStr + 'T23:59:59.999');
+            
+            query = query
+                .gte('timestamp', startDate.toISOString())
+                .lte('timestamp', endDate.toISOString())
+                .limit(1000); // 1000 point limit to cover full day details
+        } else {
+            query = query.limit(200); // fallback
+        }
+
+        const { data: locs, error } = await query;
 
         if (refreshBtn) { refreshBtn.innerText = '🔄 تحديث المسار'; refreshBtn.disabled = false; }
-        if (!locs || locs.length === 0) { return; }
+        
+        if (error) {
+            console.error('Database query error:', error);
+            showToast('⚠️ فشل في جلب سجلات الموقع!', 'error');
+            return;
+        }
+
+        // Empty state handling
+        if (!locs || locs.length === 0) {
+            clearMapLayers();
+            const statsEl = document.getElementById('map-stats');
+            if (statsEl) statsEl.classList.add('hidden');
+            showToast('⚠️ لا توجد مسارات مسجلة لهذا التاريخ!', 'error');
+            return;
+        }
 
         allLocations = locs;
         clearMapLayers();
