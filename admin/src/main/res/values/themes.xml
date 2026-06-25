@@ -1,0 +1,10 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.AdminDashboard" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/black</item>
+        <item name="colorPrimaryVariant">@color/black</item>
+        <item name="colorOnPrimary">@color/white</item>
+    </style>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="ic_launcher_background">#1A73E8</color>
+</resources>

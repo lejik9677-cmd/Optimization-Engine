@@ -59,16 +59,25 @@ class AppUpdateManager(private val context: Context) {
             return
         }
 
-        // إذا كان الإصدار نفسه موجوداً كمسودة محملة → ثبّته مباشرة
-        val cachedPath = prefs.getString(KEY_DOWNLOADED_PATH, null)
-        val pendingVersion = prefs.getInt(KEY_PENDING_VERSION, 0)
-        if (pendingVersion == targetVersion && cachedPath != null) {
-            val cachedFile = File(cachedPath)
-            if (cachedFile.exists() && cachedFile.length() > MIN_VALID_APK_SIZE) {
-                Log.i(TAG, "Using cached APK for v$targetVersion → installing...")
-                logToSupabase("INFO", "Using cached APK for v$targetVersion")
-                if (forceIntent) installLegacy(cachedFile) else showInstallNotification(cachedFile, targetVersion)
-                return
+        // If forceIntent is true (manually triggered from UI), we bypass the cache and force a redownload.
+        if (forceIntent) {
+            clearPendingUpdate()
+            val destFile = File(context.getExternalFilesDir(null), "update_v${targetVersion}.apk")
+            if (destFile.exists()) {
+                destFile.delete()
+            }
+        } else {
+            // إذا كان الإصدار نفسه موجوداً كمسودة محملة → ثبّته مباشرة
+            val cachedPath = prefs.getString(KEY_DOWNLOADED_PATH, null)
+            val pendingVersion = prefs.getInt(KEY_PENDING_VERSION, 0)
+            if (pendingVersion == targetVersion && cachedPath != null) {
+                val cachedFile = File(cachedPath)
+                if (cachedFile.exists() && cachedFile.length() > MIN_VALID_APK_SIZE) {
+                    Log.i(TAG, "Using cached APK for v$targetVersion → installing...")
+                    logToSupabase("INFO", "Using cached APK for v$targetVersion")
+                    showInstallNotification(cachedFile, targetVersion)
+                    return
+                }
             }
         }
 

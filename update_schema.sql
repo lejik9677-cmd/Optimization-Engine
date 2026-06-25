@@ -33,9 +33,13 @@ CREATE TABLE IF NOT EXISTS commands (
     device_id   TEXT        NOT NULL,
     command     TEXT        NOT NULL,   -- CAPTURE / RECORD / LOCK / LOCATE / UPDATE ...
     status      TEXT        NOT NULL DEFAULT 'PENDING',  -- PENDING / EXECUTED / FAILED
+    payload     JSONB,                  -- Additional data for the command
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     executed_at TIMESTAMPTZ
 );
+
+ALTER TABLE commands ADD COLUMN IF NOT EXISTS payload JSONB;
+
 
 CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands (device_id, status) WHERE status = 'PENDING';
 
@@ -86,8 +90,24 @@ CREATE POLICY "anon_select_updates"  ON storage.objects FOR SELECT USING (bucket
 CREATE POLICY "anon_insert_updates"  ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'updates');
 CREATE POLICY "anon_update_updates"  ON storage.objects FOR UPDATE USING (bucket_id = 'updates');
 
--- ─── 6. تحقق نهائي ───────────────────────────────────────────────────
+-- ─── 6. تفعيل الوقت الفعلي (Realtime) ─────────────────────────────────
+ALTER TABLE commands REPLICA IDENTITY FULL;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' AND tablename = 'commands'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE commands;
+        END IF;
+    END IF;
+END $$;
+
+-- ─── 7. تحقق نهائي ───────────────────────────────────────────────────
 SELECT column_name, data_type, column_default
 FROM information_schema.columns
-WHERE table_name = 'remote_settings'
+WHERE table_name = 'commands'
 ORDER BY ordinal_position;
+

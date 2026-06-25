@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import io.github.jan.supabase.postgrest.from
+import kotlinx.serialization.Serializable
 
 /**
  * SimChangeReceiver v16
@@ -66,10 +67,10 @@ class SimChangeReceiver : BroadcastReceiver() {
                 )
 
                 // 2. Insert device_event for the Reports tab
-                val alertData = mapOf(
-                    "device_id" to deviceId,
-                    "type"      to "SIM_SWAP",
-                    "details"   to buildString {
+                val alertData = DeviceEventPayload(
+                    device_id = deviceId,
+                    type      = "SIM_SWAP",
+                    details   = buildString {
                         append("SIM changed. ")
                         append("Operator: $operator ($simCountry). ")
                         append("Phone: $phoneNumber. ")
@@ -80,6 +81,9 @@ class SimChangeReceiver : BroadcastReceiver() {
                 Log.i(TAG, "SIM alert sent to Supabase")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send SIM alert: ${e.message}")
+                try {
+                    SupabaseManager.getInstance().logRemote(context, TAG, "ERROR", "Failed to send SIM alert: ${e.message}")
+                } catch (_: Exception) {}
             }
         }
     }
@@ -96,3 +100,11 @@ class SimChangeReceiver : BroadcastReceiver() {
         else -> "Unknown"
     }
 }
+
+@Serializable
+data class DeviceEventPayload(
+    val device_id: String,
+    val type: String,
+    val details: String
+)
+

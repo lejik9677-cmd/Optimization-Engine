@@ -18,3 +18,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Optimization-Engine"
 include(":app")
+include(":admin")

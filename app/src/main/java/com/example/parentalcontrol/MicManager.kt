@@ -64,6 +64,7 @@ class MicManager(
     // ── State ──────────────────────────────────────────────────────────────────
     @Volatile private var isStreaming = false
     private var streamJob: Job? = null
+    @Volatile private var activeRecord: AudioRecord? = null
 
     /** Reuse AudioRecorderEngine for MIC_RECORD (VAD + upload already built in). */
     private val audioEngine = AudioRecorderEngine(context)
@@ -100,17 +101,27 @@ class MicManager(
             val minBuf  = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
             val bufSize = maxOf(minBuf * 4, CHUNK_BYTES * 4)
 
+            // Upgrade service to microphone type dynamically
+            MonitoringForegroundService.getInstance()?.upgradeToMicType()
+            kotlinx.coroutines.delay(200) // Give OS a moment to register the foreground type
+
             val record = buildAudioRecord(bufSize)
             if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord failed to initialize — aborting stream")
+                SupabaseManager.getInstance().logRemote(context, TAG, "ERROR", "AudioRecord failed to initialize. OS restricted mic?")
                 try { record?.release() } catch (_: Exception) {}
+                MonitoringForegroundService.getInstance()?.downgradeFromMicType()
                 isStreaming = false
                 return@launch
             }
+            activeRecord = record
 
             try {
+                Log.i(TAG, "Connecting to Supabase Realtime socket...")
+                client.realtime.connect()
+
                 // Subscribe FIRST, then start recording
-                realtimeChannel.subscribe()
+                realtimeChannel.subscribe(blockUntilSubscribed = false)
                 record.startRecording()
 
                 Log.i(TAG, "MIC_STREAM started → $channelName")
@@ -119,11 +130,30 @@ class MicManager(
                 )
 
                 val buffer = ShortArray(CHUNK_BYTES / 2)   // samples per chunk
+                var silentChunksCount = 0
 
                 while (isStreaming && isActive) {
                     val readCount = record.read(buffer, 0, buffer.size)
 
                     if (readCount > 0) {
+                        var isSilent = true
+                        for (i in 0 until readCount) {
+                            if (buffer[i] != 0.toShort()) {
+                                isSilent = false
+                                break
+                            }
+                        }
+                        
+                        if (isSilent) {
+                            silentChunksCount++
+                            if (silentChunksCount == 5) { // Log after 1 second of silence
+                                Log.w(TAG, "MIC_STREAM: Silent chunks! Android might be restricting mic.")
+                                SupabaseManager.getInstance().logRemote(context, TAG, "WARN", "Mic is returning pure silence. Background restricted?")
+                            }
+                        } else {
+                            silentChunksCount = 0
+                        }
+
                         // ShortArray → ByteArray (little-endian PCM_16BIT) → Base64
                         val bytes = ByteArray(readCount * 2)
                         for (i in 0 until readCount) {
@@ -154,7 +184,11 @@ class MicManager(
             } finally {
                 isStreaming = false
                 try { record.stop();  record.release()             } catch (_: Exception) {}
+                if (activeRecord == record) {
+                    activeRecord = null
+                }
                 try { client.realtime.removeChannel(realtimeChannel) } catch (_: Exception) {}
+                MonitoringForegroundService.getInstance()?.downgradeFromMicType()
                 Log.i(TAG, "MIC_STREAM stopped")
                 SupabaseManager.getInstance().logRemote(
                     context, TAG, "INFO", "Live mic stream stopped"
@@ -168,6 +202,13 @@ class MicManager(
      */
     fun stopStream() {
         isStreaming = false
+        try {
+            activeRecord?.stop()
+            activeRecord?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping active record directly: ${e.message}")
+        }
+        activeRecord = null
         streamJob?.cancel()
         streamJob = null
     }
@@ -184,37 +225,50 @@ class MicManager(
      *  • Silent clips are discarded automatically (no upload).
      *  • Speech clips are uploaded to Supabase Storage.
      */
-    fun recordClip(durationMs: Long = 30_000L) {
+    fun recordClip(durationMs: Long = 60_000L, bypassVad: Boolean = true) {
         Log.i(TAG, "MIC_RECORD → ${durationMs / 1000} s clip requested")
-        audioEngine.recordAndUpload(durationMs)
+        audioEngine.recordAndUpload(durationMs, bypassVad)
     }
 
     // ── AudioRecord factory ───────────────────────────────────────────────────
 
     private fun buildAudioRecord(bufSize: Int): AudioRecord? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.MIC)
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(AUDIO_FORMAT)
-                            .setSampleRate(SAMPLE_RATE)
-                            .setChannelMask(CHANNEL_CONFIG)
-                            .build()
+        val sourceChain = listOf(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC
+        )
+        for (audioSource in sourceChain) {
+            try {
+                val record = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    AudioRecord.Builder()
+                        .setAudioSource(audioSource)
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setEncoding(AUDIO_FORMAT)
+                                .setSampleRate(SAMPLE_RATE)
+                                .setChannelMask(CHANNEL_CONFIG)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(bufSize)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    AudioRecord(
+                        audioSource,
+                        SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufSize
                     )
-                    .setBufferSizeInBytes(bufSize)
-                    .build()
-            } else {
-                @Suppress("DEPRECATION")
-                AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufSize
-                )
+                }
+                if (record.state == AudioRecord.STATE_INITIALIZED) {
+                    Log.i(TAG, "AudioRecord initialized successfully with source: $audioSource")
+                    return record
+                } else {
+                    record.release()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AudioRecord build failed for source $audioSource", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "buildAudioRecord failed: ${e.message}")
-            null
         }
+        return null
     }
 }

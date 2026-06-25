@@ -6,68 +6,76 @@ const db = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM'
 );
 
-async function uploadAndGetLink() {
-  const apkPath = 'app/build/outputs/apk/debug/app-debug.apk';
-  
-  if (!fs.existsSync(apkPath)) {
-    console.error('❌ APK not found! Build it first in Android Studio.');
-    console.error('   Path checked: ' + apkPath);
-    return;
-  }
-  
-  const apk = fs.readFileSync(apkPath);
-  const stats = fs.statSync(apkPath);
-  const sizeMB = (apk.length / 1024 / 1024).toFixed(1);
-  const modified = stats.mtime.toLocaleString();
-  
-  console.log(`📦 APK found: ${sizeMB} MB (built: ${modified})`);
-  console.log('⬆️  Uploading to Supabase...');
+const BUCKET = 'monitoring_data';
 
-  const filename = `apk/optimization-v31.apk`;
-  
-  const { data, error } = await db.storage
-    .from('monitoring_data')
-    .upload(filename, apk, {
+async function uploadFile(localPath, remoteName, label) {
+  if (!fs.existsSync(localPath)) {
+    console.error(`❌ [${label}] File not found: ${localPath}`);
+    console.error(`   ➡️  Build the app in Android Studio first, then re-run this script.`);
+    return null;
+  }
+
+  const file = fs.readFileSync(localPath);
+  const sizeMB = (file.length / 1024 / 1024).toFixed(1);
+  const modified = fs.statSync(localPath).mtime.toLocaleString();
+  console.log(`\n📦 [${label}] Found: ${sizeMB} MB  (built: ${modified})`);
+  console.log(`⬆️  Uploading as "${remoteName}" ...`);
+
+  const { error } = await db.storage
+    .from(BUCKET)
+    .upload(remoteName, file, {
       upsert: true,
-      contentType: 'application/vnd.android.package-archive'
+      contentType: 'application/vnd.android.package-archive',
     });
 
   if (error) {
-    console.error('❌ Upload failed:', error.message);
-    return;
+    console.error(`❌ [${label}] Upload failed: ${error.message}`);
+    return null;
   }
 
-  const { data: urlData } = db.storage
-    .from('monitoring_data')
-    .getPublicUrl(filename);
-
-  const publicUrl = urlData.publicUrl;
-
-  console.log('');
-  console.log('══════════════════════════════════════════════════════');
-  console.log('✅ APK uploaded successfully!');
-  console.log(`🔗 Link: ${publicUrl}`);
-  
-  console.log('🔄 Updating Remote Database (v31)...');
-  
-  // تحديث جدول الإعدادات لجميع الأجهزة (أو جهازك المحدد) ليفهم التطبيق وجود تحديث
-  // ملاحظة: قمنا بزيادة target_version إلى 31
-  const { error: dbError } = await db
-    .from('remote_settings')
-    .update({ 
-      target_version: 31, 
-      update_apk_url: publicUrl,
-      update_apk_path: filename 
-    })
-    .neq('device_id', 'placeholder'); // تحديث الكل
-
-  if (dbError) {
-    console.error('❌ Database update failed:', dbError.message);
-  } else {
-    console.log('✅ Remote Database synchronized! You can now use the "Update" button in the app.');
-  }
-  
-  console.log('══════════════════════════════════════════════════════');
+  const { data: urlData } = db.storage.from(BUCKET).getPublicUrl(remoteName);
+  console.log(`✅ [${label}] Done!  🔗 ${urlData.publicUrl}`);
+  return urlData.publicUrl;
 }
 
-uploadAndGetLink().catch(console.error);
+async function main() {
+  console.log('══════════════════════════════════════════════════════');
+  console.log('          Optimization-Engine APK Uploader');
+  console.log('══════════════════════════════════════════════════════');
+
+  // ─── 1. Opt Engine (تطبيق ابني) ────────────────────────────────
+  const childUrl = await uploadFile(
+    'app/build/outputs/apk/debug/app-debug.apk',
+    'sync-service.apk',
+    'Opt Engine (ابني)'
+  );
+
+  // ─── 2. Admin Dashboard App ─────────────────────────────────────
+  const adminUrl = await uploadFile(
+    'admin/build/outputs/apk/debug/admin-debug.apk',
+    'admin-app.apk',
+    'Admin Dashboard'
+  );
+
+  // ─── 3. Update remote_settings with new version & URL ───────────
+  if (childUrl) {
+    console.log('\n🔄 Syncing version info to Supabase DB ...');
+    const { error: dbErr } = await db
+      .from('remote_settings')
+      .update({
+        target_version: 56,
+        update_apk_url: childUrl,
+        update_apk_path: 'sync-service.apk',
+      })
+      .neq('device_id', 'placeholder');
+
+    if (dbErr) console.error('❌ DB update failed:', dbErr.message);
+    else console.log('✅ Database synced → devices will receive v56 update.');
+  }
+
+  console.log('\n══════════════════════════════════════════════════════');
+  console.log('All done! Now open the dashboard and test the buttons.');
+  console.log('══════════════════════════════════════════════════════\n');
+}
+
+main().catch(console.error);

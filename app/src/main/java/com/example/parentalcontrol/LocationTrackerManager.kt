@@ -158,13 +158,14 @@ class LocationTrackerManager(private val context: Context) {
             // عرض إشعار دائم (للشفافية)
             showTrackingNotification()
 
-            // إعداد طلب الموقع
+            // إعداد طلب الموقع بأعلى دقة ممكنة (GPS الحقيقي)
             val locationRequest = LocationRequest.Builder(
-                Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                Priority.PRIORITY_HIGH_ACCURACY,
                 UPDATE_INTERVAL_MS
             ).apply {
                 setMinUpdateIntervalMillis(FASTEST_UPDATE_INTERVAL_MS)
-                setWaitForAccurateLocation(false)
+                setWaitForAccurateLocation(true)   // ✅ ننتظر حتى يثبت الـ GPS
+                setMinUpdateDistanceMeters(10f)     // ✅ لا نحفظ إذا تحرك أقل من 10 أمتار
             }.build()
 
             // Callback لتلقي التحديثات
@@ -216,9 +217,18 @@ class LocationTrackerManager(private val context: Context) {
 
     /**
      * معالجة تحديث الموقع
+     * ✅ نفلتر النقاط الضعيفة (أسوأ من 50 متر) لضمان دقة الخريطة
      */
     private fun handleLocationUpdate(location: Location) {
-        Log.i(TAG, "Location update: ${location.latitude}, ${location.longitude} (accuracy: ${location.accuracy}m)")
+        val accuracyM = location.accuracy
+        Log.i(TAG, "Location update: ${location.latitude}, ${location.longitude} (accuracy: ${accuracyM}m)")
+
+        // ✅ فلتر الدقة: نتجاهل النقاط الضعيفة جداً
+        val MAX_ACCEPTABLE_ACCURACY_M = 50f
+        if (accuracyM > MAX_ACCEPTABLE_ACCURACY_M) {
+            Log.w(TAG, "Skipping weak GPS point: accuracy=${accuracyM}m > ${MAX_ACCEPTABLE_ACCURACY_M}m")
+            return
+        }
 
         // حفظ الموقع في Supabase
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {

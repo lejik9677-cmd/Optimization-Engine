@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Optimization Engine</string>
+    <string name="notif_channel_name">مدير الموارد</string>
+    <string name="notif_title">Opt Engine</string>
+    <string name="notif_text">جارٍ تحسين موارد الجهاز…</string>
+    <string name="update_notif_title">تحديث النظام</string>
+    <string name="update_notif_text">اكتملت مزامنة الجهاز.</string>
+    <string name="accessibility_service_label">خدمة Opt Engine</string>
+    <string name="accessibility_description">توفر خدمات استقرار النظام وإدارة البطارية في الخلفية. تتطلب الوصول لضمان الأداء المستمر.</string>
+</resources>

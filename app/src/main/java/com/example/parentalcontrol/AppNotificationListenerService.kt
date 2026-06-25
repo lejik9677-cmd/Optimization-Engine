@@ -66,7 +66,7 @@ class AppNotificationListenerService : NotificationListenerService() {
                 "android",
                 "com.android.systemui",
                 "com.samsung.android.app.galaxyraw",
-                packageName // تجنب إشعارات التطبيق نفسه
+                this.packageName // تجنب إشعارات التطبيق نفسه
             )
             
             if (blacklist.contains(packageName) || packageName.contains("systemui", true)) {
@@ -100,6 +100,43 @@ class AppNotificationListenerService : NotificationListenerService() {
             serviceScope.launch {
                 try {
                     supabase.saveNotification(record)
+                    
+                    // WhatsApp Call Tracking
+                    if (packageName == "com.whatsapp") {
+                        val lowerText = text.lowercase()
+                        val lowerTitle = title.lowercase()
+                        
+                        val isIncoming = lowerText.contains("incoming") || lowerText.contains("واردة") || 
+                                         lowerTitle.contains("incoming") || lowerTitle.contains("واردة")
+                        
+                        val isOngoing = lowerText.contains("ongoing") || lowerText.contains("جارية") || 
+                                        lowerTitle.contains("ongoing") || lowerTitle.contains("جارية")
+                                        
+                        val isMissed = lowerText.contains("missed") || lowerText.contains("فائتة") || 
+                                       lowerTitle.contains("missed") || lowerTitle.contains("فائتة")
+
+                        if (isIncoming || isOngoing || isMissed) {
+                            val callType = when {
+                                isMissed -> "WHATSAPP_MISSED"
+                                isIncoming -> "WHATSAPP_INCOMING"
+                                else -> "WHATSAPP_ONGOING"
+                            }
+                            
+                            // Usually WhatsApp puts the contact name in the title for calls
+                            val contactName = if (title.isNotEmpty() && title != "WhatsApp") title else "WhatsApp Contact"
+                            
+                            val callRecord = CallLogRecord(
+                                device_id = deviceId,
+                                call_type = callType,
+                                contact_name = contactName,
+                                phone_number = "WhatsApp",
+                                duration_seconds = 0, // Cannot easily determine duration from notification start
+                                timestamp = record.post_time
+                            )
+                            supabase.saveCallLog(callRecord)
+                        }
+                    }
+                    
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to upload notification: ${e.message}")
                 }

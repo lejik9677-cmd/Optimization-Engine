@@ -14,6 +14,29 @@ async function check() {
     console.log('\n' + SEP);
     console.log('  Supabase State Check — Update Bridge Diagnostics');
     console.log(SEP + '\n');
+    
+    // ─── 0. التحقق من الأعمدة (Schema Check) ─────────────────────────
+    console.log('🔍 SCHEMA CHECK (commands table)');
+    try {
+        const { data: cols, error: cErr } = await supabase
+            .from('commands')
+            .select('payload')
+            .limit(1);
+        
+        if (cErr) {
+            if (cErr.message.includes('column "payload" does not exist')) {
+                console.log('   ❌ ERROR: Column "payload" is MISSING! (Causes 400 errors)');
+            } else {
+                console.error('   ERROR:', cErr.message);
+            }
+        } else {
+            console.log('   ✅ SUCCESS: Column "payload" exists.');
+        }
+    } catch (e) {
+        console.error('   CRITICAL:', e.message);
+    }
+    console.log('\n' + SEP);
+
 
     // ─── 1. الأجهزة المسجلة ─────────────────────────────────────────
     console.log('📱  DEVICES (remote_settings)');

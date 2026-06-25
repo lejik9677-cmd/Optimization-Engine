@@ -237,10 +237,13 @@ class CallMonitoringService : Service() {
     /**
      * Build a MediaRecorder configured for call audio.
      *
-     * Source priority:
-     *   1. VOICE_COMMUNICATION – captures earpiece + mic (Bluetooth A2DP, wired headsets)
-     *   2. VOICE_RECOGNITION   – ambient + mic, no echo cancellation
-     *   3. MIC                 – universal fallback
+     * Source priority (FIXED ORDER):
+     *   1. VOICE_COMMUNICATION – MUST be first: captures BOTH earpiece audio AND mic.
+     *                            Without this, only the device mic is captured and the
+     *                            remote party's voice is completely missing in recordings.
+     *   2. VOICE_CALL          – Direct call audio path (API 29+), captures both sides.
+     *   3. VOICE_RECOGNITION   – Ambient + mic fallback, no echo cancellation.
+     *   4. MIC                 – Last resort: only captures device mic (misses earpiece).
      */
     private fun buildRecorder(outputFile: File): MediaRecorder {
         val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
@@ -248,25 +251,34 @@ class CallMonitoringService : Service() {
         else
             @Suppress("DEPRECATION") MediaRecorder()
 
-        val sourceChain = listOf(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            MediaRecorder.AudioSource.MIC
-        )
-        var chosenSource = MediaRecorder.AudioSource.MIC
+        // IMPORTANT: VOICE_COMMUNICATION MUST come before MIC.
+        // MIC only records the microphone; it cannot capture the earpiece (remote party).
+        // VOICE_COMMUNICATION captures the full call audio stream including both parties.
+        val sourceChain = buildList {
+            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // ← Both sides of call
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaRecorder.AudioSource.VOICE_CALL)       // Direct call path API 29+
+            }
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION)   // Ambient fallback
+            add(MediaRecorder.AudioSource.MIC)                  // Last resort (mic only)
+        }
+        var chosenSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION
         for (src in sourceChain) {
             try {
                 rec.setAudioSource(src)
                 chosenSource = src
+                Log.i(TAG, "✅ Call audio source selected: $src")
                 break
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w(TAG, "Audio source $src unavailable: ${e.message}")
+            }
         }
-        Log.d(TAG, "Call audio source: $chosenSource")
+        Log.d(TAG, "Call audio source final: $chosenSource")
 
         rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        rec.setAudioSamplingRate(16_000)      // 16 kHz — voice range
-        rec.setAudioEncodingBitRate(32_000)   // 32 kbps ≈ 14 KB/min
+        rec.setAudioSamplingRate(44_100)      // 44.1 kHz — full voice quality
+        rec.setAudioEncodingBitRate(128_000)  // 128 kbps — clear call audio
         rec.setOutputFile(outputFile.absolutePath)
         return rec
     }

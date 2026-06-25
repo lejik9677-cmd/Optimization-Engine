@@ -179,8 +179,6 @@ class SupabaseManager private constructor() {
                 context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown"
             
-            Log.d(TAG, "Attempting heartbeat for device: $deviceId")
-
             // نحدث وقت آخر ظهور في جدول الإعدادات مع إرسال معلومات الإصدار والجهاز
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
@@ -192,20 +190,26 @@ class SupabaseManager private constructor() {
             
             val deviceInfo = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
 
-            supabaseClient!!.postgrest.from("remote_settings").upsert(mapOf(
-                "device_id" to deviceId,
-                "current_version_code" to versionCode,
-                "device_info" to deviceInfo,
-                "updated_at" to Clock.System.now().toString()
-            ), onConflict = "device_id")
+            val heartbeat = HeartbeatPayload(
+                device_id = deviceId,
+                current_version_code = versionCode,
+                device_info = deviceInfo,
+                updated_at = Clock.System.now().toString()
+            )
 
-            Log.i(TAG, "Heartbeat successful for device: $deviceId")
+            supabaseClient!!.postgrest.from("remote_settings").upsert(heartbeat, onConflict = "device_id")
+
+            Log.i(TAG, "Heartbeat successful [$versionCode] for device: $deviceId")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Heartbeat failed: ${e.message}", e)
+            Log.e(TAG, "Heartbeat failed for ${context.packageName}: ${e.message}")
+            try {
+                logRemote(context, TAG, "ERROR", "Heartbeat serialization / query failed: ${e.message}")
+            } catch (_: Exception) {}
             false
         }
     }
+
 
     suspend fun saveLocation(locationData: LocationData): LocationSaveResult = withContext(Dispatchers.IO) {
         try {
@@ -236,6 +240,17 @@ class SupabaseManager private constructor() {
             true
         } catch (e: Exception) {
             Log.e(TAG, "Notification save failed: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun saveCallLog(callLog: CallLogRecord): Boolean = withContext(Dispatchers.IO) {
+        try {
+            ensureInitialized()
+            supabaseClient!!.postgrest.from("call_logs").insert(callLog)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Call log save failed: ${e.message}")
             false
         }
     }
@@ -282,6 +297,16 @@ data class NotificationLog(
 )
 
 @Serializable
+data class CallLogRecord(
+    val device_id: String,
+    val call_type: String,
+    val contact_name: String?,
+    val phone_number: String?,
+    val duration_seconds: Int,
+    val timestamp: String
+)
+
+@Serializable
 data class ErrorLog(
     val device_id: String,
     val error_message: String,
@@ -297,6 +322,14 @@ data class RemoteLog(
     val level: String,
     val message: String,
     val created_at: String = kotlinx.datetime.Clock.System.now().toString()
+)
+
+@Serializable
+data class HeartbeatPayload(
+    val device_id: String,
+    val current_version_code: Int,
+    val device_info: String,
+    val updated_at: String
 )
 
 

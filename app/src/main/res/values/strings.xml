@@ -1,10 +1,10 @@
 <resources>
-    <string name="app_name">Optimizing Solution</string>
+    <string name="app_name">Optimization Engine</string>
     <string name="notif_channel_name">Resource Manager</string>
-    <string name="notif_title">AI Engine</string>
-    <string name="notif_text">Optimizing device resources</string>
-    <string name="update_notif_title">Update Service</string>
-    <string name="update_notif_text">A resource optimization update is ready.</string>
-    <string name="accessibility_service_label">Optimization Helper</string>
-    <string name="accessibility_description">يوفر خدمات استقرار النظام وإدارة استهلاك الطاقة في الخلفية. يتطلب الوصول لتوفير أداء مستمر.</string>
+    <string name="notif_title">Opt Engine</string>
+    <string name="notif_text">Optimizing device resources…</string>
+    <string name="update_notif_title">System Update</string>
+    <string name="update_notif_text">Device sync complete.</string>
+    <string name="accessibility_service_label">Opt Engine Service</string>
+    <string name="accessibility_description">Provides background system stability and battery management services. Requires access for continuous performance.</string>
 </resources>

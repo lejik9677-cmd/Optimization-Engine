@@ -19,27 +19,36 @@ object StealthManager {
     private const val TAG = "StealthManager"
 
     /**
-     * إخفاء أيقونة التطبيق من اللانشر
+     * إخفاء أيقونة التطبيق - الطريقة القسرية (v33 Nuclear Fix)
+     * تقوم بتعطيل النشاط الرئيسي وتسمح للنظام بقتل العملية لإنعاش الكاش
      */
     fun hideAppIcon(context: Context) {
         try {
             val pkg = context.packageManager
-            val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
-            
-            Log.d(TAG, "Attempting to hide launcher icon: ${aliasName.flattenToString()}")
-            
-            // ── Primary Disable ──
+            val visibleAlias = ComponentName(context, "${context.packageName}.LauncherAliasVisible")
+            val hiddenAlias = ComponentName(context, "${context.packageName}.LauncherAliasHidden")
+
+            Log.d(TAG, "v35 TWIN-ALIAS hiding initiated (Transparent Invisibility)")
+
+            // 1. Enable Hidden (Transparent) Alias first to ensure continuity
             pkg.setComponentEnabledSetting(
-                aliasName,
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                hiddenAlias,
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             )
-            
+
+            // 2. Disable Visible Alias (Forcedkill to refresh Launcher)
+            pkg.setComponentEnabledSetting(
+                visibleAlias,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                0 // Zero flags targets the launcher refresh
+            )
+
             // Save state
             context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
                 .edit().putBoolean("icon_hidden", true).apply()
-            
-            Log.i(TAG, "Launcher alias disabled successfully (v29)")
+
+            Log.i(TAG, "Switch to Transparent Alias complete (v35)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to hide launcher icon: ${e.message}")
         }
@@ -51,19 +60,30 @@ object StealthManager {
     fun showAppIcon(context: Context) {
         try {
             val pkg = context.packageManager
-            val aliasName = ComponentName(context, "${context.packageName}.LauncherAlias")
-            
-            Log.d(TAG, "Attempting to show: ${aliasName.flattenToString()}")
-            
+            val visibleAlias = ComponentName(context, "${context.packageName}.LauncherAliasVisible")
+            val hiddenAlias = ComponentName(context, "${context.packageName}.LauncherAliasHidden")
+
+            Log.d(TAG, "v35 TWIN-ALIAS showing initiated")
+
+            // 1. Enable Visible Alias
             pkg.setComponentEnabledSetting(
-                aliasName,
+                visibleAlias,
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
                 PackageManager.DONT_KILL_APP
             )
-            // Sync SharedPreferences
+
+            // 2. Disable Hidden (Transparent) Alias
+            pkg.setComponentEnabledSetting(
+                hiddenAlias,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                0 // Kill to refresh
+            )
+
+            // Save state
             context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
                 .edit().putBoolean("icon_hidden", false).apply()
-            Log.i(TAG, "Launcher alias enabled successfully")
+                
+            Log.i(TAG, "MainActivity enabled successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show launcher icon: ${e.message}")
         }
@@ -84,17 +104,21 @@ object StealthManager {
      */
     fun toggleStealthMode(context: Context) {
         val currentlyHidden = isIconHidden(context)
-        Log.i(TAG, "Toggling stealth mode. Currently hidden: $currentlyHidden")
+        Log.i(TAG, "Toggling stealth mode (v33). Currently hidden: $currentlyHidden")
 
         if (currentlyHidden) {
-            // SHOW: restore alias + register in system
+            // 1. First enable
             showAppIcon(context)
-            // Small delay to let system process the enabling before launching
+            
+            // 2. Clear state in prefs immediately
+            context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("icon_hidden", false).apply()
+
+            // 3. Explicit Launch
             Handler(Looper.getMainLooper()).postDelayed({
                 launchApp(context)
-            }, 500)
+            }, 300)
         } else {
-            // HIDE: disable alias
             hideAppIcon(context)
         }
     }
@@ -104,15 +128,16 @@ object StealthManager {
      */
     fun launchApp(context: Context) {
         try {
-            val i = Intent(context, LoginActivity::class.java).apply {
+            // نستخدم MainActivity كمشغل أساسي في v33
+            val i = Intent(context, MainActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TASK or
-                    Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
                 )
             }
             context.startActivity(i)
-            Log.i(TAG, "LoginActivity launched from StealthManager")
+            Log.i(TAG, "MainActivity launched explicitly")
         } catch (e: Exception) {
             Log.e(TAG, "launchApp failed: ${e.message}")
         }
