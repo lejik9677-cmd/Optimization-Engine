@@ -118,9 +118,18 @@ function toggleDashboard(isLoggedIn) {
     if (dashboard)   dashboard.style.display   = isLoggedIn ? 'flex' : 'none';
 
     if (isLoggedIn) {
+        const isEnabled = localStorage.getItem('autoRecordOnSelect') === 'true';
+        document.querySelectorAll('.auto-record-select-toggle').forEach(el => {
+            el.checked = isEnabled;
+        });
         loadDeviceList();
         startAutoRefresh();
         buildSettingsToggles();
+    } else {
+        currentDeviceId = null;
+        clearInterval(autoRefreshTimer);
+        cleanupAutoRecord();
+        cleanupAutoRecordOnSelectTimer();
     }
 }
 
@@ -244,6 +253,7 @@ async function loadDeviceList() {
 //  SELECT DEVICE
 // ═══════════════════════════════════════════════════════════
 async function selectDevice(deviceId, deviceData = null) {
+    cleanupAutoRecord();
     if (!deviceId) {
         currentDeviceId = null;
         document.getElementById('current-device-name').innerText = 'اختر جهازاً من القائمة';
@@ -295,6 +305,29 @@ async function selectDevice(deviceId, deviceData = null) {
 
     // Populate settings from DB
     syncSettingsFromDB(deviceData);
+
+    // Trigger auto-record immediately if enabled (non-blocking, fast startup)
+    const isEnabled = localStorage.getItem('autoRecordOnSelect') === 'true';
+    document.querySelectorAll('.auto-record-select-toggle').forEach(el => {
+        el.checked = isEnabled;
+    });
+    cleanupAutoRecordOnSelectTimer();
+    if (isEnabled) {
+        console.log('⏺ Auto-recording triggered immediately for device:', deviceId);
+        setTimeout(() => {
+            if (currentDeviceId === deviceId) {
+                triggerRecordNow();
+            }
+        }, 100);
+
+        // Start periodic recording every 75 seconds while dashboard is open
+        autoRecordOnSelectTimer = setInterval(() => {
+            if (currentDeviceId === deviceId) {
+                console.log('🔄 [autoRecordOnSelectTimer] Triggering periodic record for:', deviceId);
+                triggerRecordNow();
+            }
+        }, 75_000);
+    }
 
     // Load current tab content
     await refreshCurrentData();
@@ -895,8 +928,28 @@ function initRouteDatePicker() {
 function filterGPSPoints(locs) {
     if (!locs || locs.length === 0) return [];
     
+    // Clean and validate coordinates to avoid NaN or invalid LatLng crashes in Leaflet Map
+    const cleanLocs = [];
+    for (let i = 0; i < locs.length; i++) {
+        const l = locs[i];
+        if (!l) continue;
+        const lat = parseFloat(l.latitude);
+        const lng = parseFloat(l.longitude);
+        if (!isNaN(lat) && isFinite(lat) && !isNaN(lng) && isFinite(lng)) {
+            cleanLocs.push({
+                ...l,
+                latitude: lat,
+                longitude: lng,
+                accuracy: l.accuracy ? parseFloat(l.accuracy) : null,
+                battery_level: l.battery_level != null ? parseFloat(l.battery_level) : null
+            });
+        }
+    }
+    
+    if (cleanLocs.length === 0) return [];
+    
     // Sort chronologically (oldest to newest)
-    const chronological = [...locs].reverse();
+    const chronological = [...cleanLocs].reverse();
     
     // Step 1: Filter out bad accuracy points (e.g. > 100 meters)
     // But don't filter out everything - keep at least 2 points
@@ -1253,8 +1306,8 @@ async function fetchPositions() {
             routeMarkers.push(sm);
         }
 
-        // --- END / CURRENT marker (placed at the latest raw GPS point for true current state) ---
-        const latest = locs[0]; // locs is descending -> index 0 is newest
+        // --- END / CURRENT marker (placed at the latest clean GPS point for true current state) ---
+        const latest = filteredLocs[filteredLocs.length - 1]; // filteredLocs is ascending -> last element is newest
         const pulseHtml = `
             <div style="position:relative;width:36px;height:36px;">
                 <div style="position:absolute;inset:0;background:rgba(34,197,94,0.3);border-radius:50%;animation:ping 1.4s cubic-bezier(0,0,.2,1) infinite;"></div>
@@ -1274,16 +1327,33 @@ async function fetchPositions() {
         routeMarkers.push(lm);
 
         // --- Fly to latest with nice zoom ---
-        mapInstance.flyTo([latest.latitude, latest.longitude], 16, { duration: 1.8, easeLinearity: 0.25 });
+        if (mapInstance) {
+            try {
+                mapInstance.invalidateSize();
+                const currentCenter = mapInstance.getCenter();
+                if (currentCenter && !isNaN(currentCenter.lat) && !isNaN(currentCenter.lng)) {
+                    mapInstance.flyTo([latest.latitude, latest.longitude], 16, { duration: 1.8, easeLinearity: 0.25 });
+                } else {
+                    mapInstance.setView([latest.latitude, latest.longitude], 16);
+                }
+            } catch (e) {
+                console.warn('Map flyTo failed, falling back to setView:', e);
+                try {
+                    mapInstance.setView([latest.latitude, latest.longitude], 16);
+                } catch (err) {
+                    console.error('Map setView fallback failed:', err);
+                }
+            }
+        }
 
         // --- Update stats bar with road-snapped distance ---
-        updateMapStats(locs, snappedPts);
+        updateMapStats(filteredLocs, snappedPts);
 
         // --- Update last-location info panel ---
         updateLastLocationInfo(latest);
 
-        // --- Heatmap update if active (based on raw locations for cluster intensity) ---
-        if (heatmapVisible) updateHeatmap(locs);
+        // --- Heatmap update if active (based on clean locations for cluster intensity) ---
+        if (heatmapVisible) updateHeatmap(filteredLocs);
 
     } catch (e) {
         console.error('fetchPositions:', e);
@@ -1313,11 +1383,11 @@ function updateLastLocationInfo(latest) {
     infoEl.classList.remove('hidden');
 }
 
-function updateMapStats(locs, snappedPts) {
+function updateMapStats(filteredLocs, snappedPts) {
     const statsEl = document.getElementById('map-stats');
     if (!statsEl) return;
 
-    const n = locs.length;
+    const n = filteredLocs.length;
     let totalKm = 0;
     const nSnapped = snappedPts.length;
     
@@ -1326,8 +1396,8 @@ function updateMapStats(locs, snappedPts) {
         totalKm += haversineKm(snappedPts[i], snappedPts[i+1]);
     }
 
-    const latest    = locs[0];
-    const oldest    = locs[locs.length - 1];
+    const latest    = filteredLocs[filteredLocs.length - 1];
+    const oldest    = filteredLocs[0];
     const spanHours = ((new Date(latest.timestamp) - new Date(oldest.timestamp)) / 3600000).toFixed(1);
     const avgSpeed  = spanHours > 0 ? (totalKm / spanHours).toFixed(1) : '?';
 
@@ -1394,7 +1464,12 @@ let audioFilter = 'all';
 window.setAudioFilter = function(f) {
     audioFilter = f;
     document.querySelectorAll('.audio-filter-btn').forEach(b => {
-        b.classList.toggle('active-filter', b.dataset.filter === f);
+        const isActive = b.getAttribute('data-filter') === f;
+        if (isActive) {
+            b.className = 'audio-filter-btn px-3 py-1 text-xs font-bold rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30';
+        } else {
+            b.className = 'audio-filter-btn px-3 py-1 text-xs font-bold rounded-full bg-white/5 text-slate-400 border border-white/10 hover:bg-white/8';
+        }
     });
     fetchAudio();
 };
@@ -1431,9 +1506,15 @@ async function fetchAudio() {
             return;
         }
 
+        const heard = getHeardAudios();
+        let filteredAudioFiles = audioFiles;
+        if (audioFilter === 'heard') {
+            filteredAudioFiles = audioFiles.filter(f => heard[`audio/${currentDeviceId}/${f.name}`]);
+        } else if (audioFilter === 'unheard') {
+            filteredAudioFiles = audioFiles.filter(f => !heard[`audio/${currentDeviceId}/${f.name}`]);
+        }
 
-
-        // ── Toolbar: select-all + delete-selected ──────────────────────
+        // ── Toolbar: select-all + play-selected + delete-selected ──────────────────────
         const toolbar = document.createElement('div');
         toolbar.id = 'audio-toolbar';
         toolbar.className = 'flex items-center justify-between px-4 py-3 mb-2 rounded-xl bg-white/3 border border-white/5';
@@ -1444,15 +1525,30 @@ async function fetchAudio() {
                 <span class="text-xs font-bold text-slate-400">تحديد الكل</span>
                 <span id="audio-selected-count" class="text-xs text-blue-400 font-black hidden"></span>
             </label>
-            <button id="audio-delete-selected-btn" onclick="deleteSelectedAudio()"
-                class="px-4 py-1.5 text-xs font-black rounded-lg transition-all hidden"
-                style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:#fca5a5;">
-                🗑️ حذف المحدد
-            </button>`;
+            <div class="flex items-center gap-6">
+                <button id="audio-play-selected-btn" onclick="playSelectedAudio()"
+                    class="px-4 py-1.5 text-xs font-black rounded-lg transition-all hidden"
+                    style="background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.35);color:#a7f3d0;">
+                    🔊 استماع للمحدد
+                </button>
+                <button id="audio-delete-selected-btn" onclick="deleteSelectedAudio()"
+                    class="px-4 py-1.5 text-xs font-black rounded-lg transition-all hidden"
+                    style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:#fca5a5;">
+                    🗑️ حذف المحدد
+                </button>
+            </div>`;
         list.innerHTML = '';
         list.appendChild(toolbar);
 
-        audioFiles.forEach((f, i) => {
+        if (filteredAudioFiles.length === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'empty-state empty-state-filtered text-sm';
+            emptyEl.innerHTML = audioFilter === 'heard' ? '<p>لا توجد تسجيلات مسموعة</p>' : (audioFilter === 'unheard' ? '<p>لا توجد تسجيلات غير مسموعة</p>' : '<p>لا توجد تسجيلات صوتية</p>');
+            list.appendChild(emptyEl);
+            return;
+        }
+
+        filteredAudioFiles.forEach((f, i) => {
             const sizeKB = f.metadata?.size ? Math.round(f.metadata.size / 1024) : '?';
             const isCall = f.name.startsWith('call_');
             const icon   = isCall ? '📞' : '🎙️';
@@ -1462,25 +1558,35 @@ async function fetchAudio() {
                 : '<span class="text-[10px] font-bold text-slate-400">تسجيل عن بُعد (تنصت)</span>';
             const filePath = `audio/${currentDeviceId}/${f.name}`;
             const cardId   = f.name.replace(/\./g, '_');
+            const isHeard  = !!heard[filePath];
 
             const card = document.createElement('div');
             card.className = 'audio-card animate-fade';
             card.id = `audio-card-${cardId}`;
             card.innerHTML = `
                 <input type="checkbox" class="audio-checkbox w-4 h-4 accent-blue-500 flex-shrink-0 cursor-pointer"
-                    data-path="${filePath}" data-cardid="${cardId}"
+                    data-path="${filePath}" data-cardid="${cardId}" data-createdat="${f.created_at}"
                     onchange="updateAudioSelectionUI()">
                 <div class="flex items-center gap-3 flex-1 min-w-0">
                     <div class="w-10 h-10 rounded-xl ${iconBg} border flex items-center justify-center text-lg flex-shrink-0">${icon}</div>
                     <div class="min-w-0">
-                        ${label}
+                        <div class="flex items-center gap-2 mb-0.5">
+                            ${label}
+                            <span class="audio-heard-badge text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer select-none transition-all flex items-center gap-1 ${
+                                isHeard 
+                                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300' 
+                                : 'bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300'
+                            }" onclick="toggleAudioHeardState('${filePath}', '${cardId}', event)">
+                                ${isHeard ? '🎧 مسموع' : '🆕 غير مسموع'}
+                            </span>
+                        </div>
                         <p class="text-sm font-bold text-slate-200 truncate">${f.name}</p>
-                        <p class="text-xs text-slate-500">${formatRelativeTime(f.created_at)} · ${sizeKB} KB</p>
+                        <p class="text-xs text-slate-400 mt-0.5">${formatAudioTimestamp(f.name, f.created_at)} · ${sizeKB} KB</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
                     <span class="audio-status-text text-xs text-slate-400 hidden"></span>
-                    <audio controls class="h-9 w-52" style="display:none; accent-color:#22c55e" preload="none"></audio>
+                    <audio controls class="h-9 w-52" style="display:none; accent-color:#22c55e" preload="none" onplay="markAudioAsHeard('${filePath}', '${cardId}')"></audio>
                     <button onclick="loadAudioBlob(this, '${filePath}', '${cardId}')"
                             class="px-3 py-1.5 text-xs font-bold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/25 transition-all flex items-center gap-1">
                         ▶️ تشغيل
@@ -1491,10 +1597,10 @@ async function fetchAudio() {
                               hover:bg-blue-500/25 hover:text-blue-300 flex items-center justify-center
                               text-xs transition-all flex-shrink-0">⬇️</button>
                     <button onclick="deleteAudio('${filePath}', '${cardId}')"
-                        title="حذف التسجيل"
-                        class="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400
-                               hover:bg-red-500/25 hover:text-red-300 flex items-center justify-center
-                               text-xs transition-all flex-shrink-0">🗑️</button>
+                         title="حذف التسجيل"
+                         class="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400
+                                hover:bg-red-500/25 hover:text-red-300 flex items-center justify-center
+                                text-xs transition-all flex-shrink-0">🗑️</button>
                 </div>`;
             list.appendChild(card);
         });
@@ -1537,9 +1643,17 @@ function updateAudioSelectionUI() {
     const checkboxes = document.querySelectorAll('.audio-checkbox');
     const checked    = document.querySelectorAll('.audio-checkbox:checked');
     const deleteBtn  = document.getElementById('audio-delete-selected-btn');
+    const playBtn    = document.getElementById('audio-play-selected-btn');
     const countEl    = document.getElementById('audio-selected-count');
     const selectAll  = document.getElementById('audio-select-all');
 
+    if (playBtn) {
+        if (checked.length > 0) {
+            playBtn.classList.remove('hidden');
+        } else {
+            playBtn.classList.add('hidden');
+        }
+    }
     if (deleteBtn) {
         if (checked.length > 0) {
             deleteBtn.classList.remove('hidden');
@@ -1682,8 +1796,21 @@ async function deleteDevice() {
 
 function checkAudioListEmpty() {
     const list = document.getElementById('audio-list');
-    if (list && list.querySelectorAll('.audio-card').length === 0) {
-        list.innerHTML = '<div class="empty-state text-sm"><p>لا توجد تسجيلات صوتية</p></div>';
+    if (list) {
+        const hasVisible = Array.from(list.querySelectorAll('.audio-card')).some(c => c.style.display !== 'none');
+        if (!hasVisible) {
+            let empty = list.querySelector('.empty-state-filtered') || list.querySelector('.empty-state');
+            if (!empty) {
+                empty = document.createElement('div');
+                empty.className = 'empty-state empty-state-filtered text-sm';
+                list.appendChild(empty);
+            }
+            empty.className = 'empty-state empty-state-filtered text-sm';
+            empty.innerHTML = audioFilter === 'heard' ? '<p>لا توجد تسجيلات مسموعة</p>' : (audioFilter === 'unheard' ? '<p>لا توجد تسجيلات غير مسموعة</p>' : '<p>لا توجد تسجيلات صوتية</p>');
+        } else {
+            const empty = list.querySelector('.empty-state-filtered');
+            if (empty) empty.remove();
+        }
     }
 }
 
@@ -2057,6 +2184,122 @@ async function triggerRecordNow() {
     showNotif('⏺ تسجيل 60 ث بدأ — سيُرفع تلقائياً إن كان فيه صوت', 'info');
 }
 
+let autoRecordOnSelectTimer = null;
+let autoRecordTimer = null;
+
+async function toggleAutoRecord(checkbox) {
+    console.log('🔄 [toggleAutoRecord] Fired! checked =', checkbox?.checked, 'currentDeviceId =', currentDeviceId);
+    const intervalInput = document.getElementById('auto-record-interval');
+    if (!checkbox) return;
+    
+    if (!currentDeviceId) {
+        checkbox.checked = false;
+        return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+    }
+    
+    if (checkbox.checked) {
+        let seconds = parseInt(intervalInput?.value) || 90;
+        if (seconds < 70) {
+            seconds = 70;
+            if (intervalInput) intervalInput.value = 70;
+        }
+        if (intervalInput) intervalInput.disabled = true;
+        
+        try {
+            showNotif(`⏳ جاري تفعيل التكرار التلقائي كل ${seconds} ثانية...`, 'info');
+            
+            // 1. Update remote_settings
+            await db.from('remote_settings').update({
+                recording_enabled: true,
+                capture_interval: seconds * 1000
+            }).eq('device_id', currentDeviceId);
+            
+            // 2. Send real-time command
+            await sendCommand('START_AUTO_RECORD', { interval_ms: seconds * 1000 });
+            
+            showNotif(`🟢 تم تفعيل التكرار التلقائي في الخلفية`, 'success');
+        } catch (e) {
+            checkbox.checked = false;
+            if (intervalInput) intervalInput.disabled = false;
+            showNotif('❌ فشل تفعيل التكرار التلقائي', 'error');
+            console.error(e);
+        }
+    } else {
+        if (intervalInput) intervalInput.disabled = false;
+        
+        try {
+            showNotif('⏳ جاري إيقاف التكرار التلقائي...', 'info');
+            
+            // 1. Update remote_settings
+            await db.from('remote_settings').update({
+                recording_enabled: false
+            }).eq('device_id', currentDeviceId);
+            
+            // 2. Send real-time command
+            await sendCommand('STOP_AUTO_RECORD', {});
+            
+            showNotif('🔴 تم إيقاف التكرار التلقائي في الخلفية', 'info');
+        } catch (e) {
+            checkbox.checked = true;
+            if (intervalInput) intervalInput.disabled = true;
+            showNotif('❌ فشل إيقاف التكرار التلقائي', 'error');
+            console.error(e);
+        }
+    }
+}
+
+function cleanupAutoRecord() {
+    const intervalInput = document.getElementById('auto-record-interval');
+    if (intervalInput) intervalInput.disabled = false;
+    const checkbox = document.getElementById('auto-record-toggle');
+    if (checkbox) checkbox.checked = false;
+
+    // Reset the manual record button state when cleaning up / switching devices
+    const btn = document.getElementById('record-now-btn');
+    if (btn) {
+        btn.disabled = false;
+        btn.innerText = '⏺ تسجيل الآن';
+    }
+}
+
+function cleanupAutoRecordOnSelectTimer() {
+    if (autoRecordOnSelectTimer) {
+        clearInterval(autoRecordOnSelectTimer);
+        autoRecordOnSelectTimer = null;
+        console.log('🛑 [cleanupAutoRecordOnSelectTimer] Cleared autoRecordOnSelectTimer');
+    }
+}
+
+function toggleAutoRecordOnSelect(checkbox) {
+    if (checkbox) {
+        const checked = checkbox.checked;
+        localStorage.setItem('autoRecordOnSelect', checked ? 'true' : 'false');
+        console.log('🔄 [toggleAutoRecordOnSelect] Checked:', checked);
+        
+        // Sync all checkboxes
+        document.querySelectorAll('.auto-record-select-toggle').forEach(el => {
+            el.checked = checked;
+        });
+        
+        cleanupAutoRecordOnSelectTimer();
+        
+        if (checked && currentDeviceId) {
+            triggerRecordNow();
+            autoRecordOnSelectTimer = setInterval(() => {
+                if (currentDeviceId) {
+                    console.log('🔄 [autoRecordOnSelectTimer] Triggering periodic record for:', currentDeviceId);
+                    triggerRecordNow();
+                }
+            }, 75_000);
+        }
+    }
+}
+
+// Bind to window for inline HTML events
+window.toggleAutoRecord = toggleAutoRecord;
+window.cleanupAutoRecord = cleanupAutoRecord;
+window.toggleAutoRecordOnSelect = toggleAutoRecordOnSelect;
+
 // ═══════════════════════════════════════════════════════════
 //  APP USAGE
 // ═══════════════════════════════════════════════════════════
@@ -2276,6 +2519,17 @@ function syncSettingsFromDB(data) {
         const el = document.getElementById(elId);
         if (el && data[dbKey] !== undefined) el.checked = !!data[dbKey];
     });
+
+    // Auto-Record loop settings sync
+    const autoRecordToggle = document.getElementById('auto-record-toggle');
+    const autoRecordInterval = document.getElementById('auto-record-interval');
+    if (autoRecordToggle) {
+        autoRecordToggle.checked = !!data.recording_enabled;
+        if (autoRecordInterval) {
+            autoRecordInterval.value = data.capture_interval ? Math.round(data.capture_interval / 1000) : 90;
+            autoRecordInterval.disabled = !!data.recording_enabled;
+        }
+    }
 }
 
 async function saveAllSettings() {
@@ -2627,6 +2881,203 @@ async function blockDevice(macAddress, shouldBlock) {
         showNotif('❌ فشل إرسال الأمر', 'error');
     }
 }
+
+function getHeardAudios() {
+    try {
+        return JSON.parse(localStorage.getItem('heard_recordings') || '{}');
+    } catch (e) {
+        return {};
+    }
+}
+
+function toggleAudioHeardState(filePath, cardId, event) {
+    if (event) event.stopPropagation();
+    const heard = getHeardAudios();
+    const isHeard = !heard[filePath];
+    if (isHeard) {
+        heard[filePath] = true;
+    } else {
+        delete heard[filePath];
+    }
+    localStorage.setItem('heard_recordings', JSON.stringify(heard));
+    
+    // Update card UI
+    const card = document.getElementById(`audio-card-${cardId}`);
+    if (card) {
+        const badge = card.querySelector('.audio-heard-badge');
+        if (badge) {
+            if (isHeard) {
+                badge.className = 'audio-heard-badge text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer select-none bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition-all flex items-center gap-1';
+                badge.innerHTML = '🎧 مسموع';
+            } else {
+                badge.className = 'audio-heard-badge text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer select-none bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-all flex items-center gap-1';
+                badge.innerHTML = '🆕 غير مسموع';
+            }
+        }
+        
+        if (audioFilter === 'heard' && !isHeard) {
+            fadeAndRemoveOrHide(card);
+        } else if (audioFilter === 'unheard' && isHeard) {
+            fadeAndRemoveOrHide(card);
+        }
+    }
+}
+
+function fadeAndRemoveOrHide(card) {
+    card.style.transition = 'opacity 0.3s, transform 0.3s';
+    card.style.opacity = '0';
+    card.style.transform = 'translateY(-10px)';
+    setTimeout(() => { 
+        card.style.display = 'none';
+        checkAudioListEmpty();
+    }, 300);
+}
+
+function markAudioAsHeard(filePath, cardId) {
+    const heard = getHeardAudios();
+    if (heard[filePath]) return;
+    
+    heard[filePath] = true;
+    localStorage.setItem('heard_recordings', JSON.stringify(heard));
+    
+    const card = document.getElementById(`audio-card-${cardId}`);
+    if (card) {
+        const badge = card.querySelector('.audio-heard-badge');
+        if (badge) {
+            badge.className = 'audio-heard-badge text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer select-none bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition-all flex items-center gap-1';
+            badge.innerHTML = '🎧 مسموع';
+        }
+        if (audioFilter === 'unheard') {
+            setTimeout(() => {
+                if (audioFilter === 'unheard') {
+                    fadeAndRemoveOrHide(card);
+                }
+            }, 1000);
+        }
+    }
+}
+
+// ── Play selected audios sequentially ────────────────────────
+let audioQueue = [];
+let currentQueueIndex = -1;
+
+async function playSelectedAudio() {
+    const checked = document.querySelectorAll('.audio-checkbox:checked');
+    if (checked.length === 0) return showNotif('⚠️ لم يتم اختيار أي تسجيل', 'warn');
+    
+    // Stop any currently playing audio in the dashboard
+    document.querySelectorAll('audio').forEach(a => {
+        try { a.pause(); } catch(_) {}
+    });
+    
+    audioQueue = Array.from(checked).map(cb => ({
+        path: cb.getAttribute('data-path') || cb.dataset.path,
+        cardId: cb.getAttribute('data-cardid') || cb.dataset.cardid,
+        createdAt: cb.getAttribute('data-createdat') || cb.dataset.createdat || ''
+    }));
+    
+    // Sort chronologically (ascending: oldest to newest)
+    audioQueue.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    
+    currentQueueIndex = 0;
+    playQueueItem(currentQueueIndex);
+}
+
+async function playQueueItem(index) {
+    if (index < 0 || index >= audioQueue.length) {
+        audioQueue = [];
+        currentQueueIndex = -1;
+        showNotif('✅ تم الانتهاء من تشغيل كافة التسجيلات المحددة', 'success');
+        return;
+    }
+    
+    const item = audioQueue[index];
+    const card = document.getElementById(`audio-card-${item.cardId}`);
+    if (!card) return playNextQueueItem();
+    
+    const audio = card.querySelector('audio');
+    const playBtn = card.querySelector('button[onclick*="loadAudioBlob"]');
+    
+    // Highlight active card
+    card.style.border = '1px solid #22c55e';
+    card.style.background = 'rgba(34,197,94,0.05)';
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    
+    // Add ended event listener once
+    if (!audio.dataset.hasQueueListener) {
+        audio.dataset.hasQueueListener = 'true';
+        audio.addEventListener('ended', () => {
+            const curCard = document.getElementById(`audio-card-${item.cardId}`);
+            if (curCard) {
+                curCard.style.border = '';
+                curCard.style.background = '';
+            }
+            playNextQueueItem();
+        });
+    }
+    
+    if (audio.src && audio.src.startsWith('blob:')) {
+        audio.style.display = 'inline-flex';
+        if (playBtn) playBtn.style.display = 'none';
+        const status = card.querySelector('.audio-status-text');
+        if (status) status.classList.add('hidden');
+        audio.play().catch(e => {
+            console.warn('Play failed, skipping:', e);
+            playNextQueueItem();
+        });
+    } else {
+        try {
+            await loadAudioBlob(playBtn, item.path, item.cardId);
+        } catch (err) {
+            console.error('Failed to load item in queue:', err);
+            playNextQueueItem();
+        }
+    }
+}
+
+function playNextQueueItem() {
+    if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.length) {
+        const prevItem = audioQueue[currentQueueIndex];
+        const prevCard = document.getElementById(`audio-card-${prevItem.cardId}`);
+        if (prevCard) {
+            prevCard.style.border = '';
+            prevCard.style.background = '';
+        }
+    }
+    currentQueueIndex++;
+    playQueueItem(currentQueueIndex);
+}
+
+function formatAudioTimestamp(name, ts) {
+    if (!name) return ts ? new Date(ts).toLocaleString('ar-EG') : '--';
+    
+    // filenames: call_20260704_121500.m4a or rec_20260704_121500.m4a
+    const match = name.match(/_(20\d{6})_(\d{6})/);
+    if (match) {
+        const dateStr = match[1]; // yyyyMMdd
+        const timeStr = match[2]; // HHmmss
+        const year = dateStr.slice(0, 4);
+        const month = dateStr.slice(4, 6);
+        const day = dateStr.slice(6, 8);
+        const hour = timeStr.slice(0, 2);
+        const minute = timeStr.slice(2, 4);
+        const second = timeStr.slice(4, 6);
+        return `📅 ${day}/${month}/${year} - 🕒 ${hour}:${minute}:${second}`;
+    }
+    
+    if (ts) {
+        const d = new Date(ts);
+        return `📅 ${d.toLocaleDateString('ar-EG')} - 🕒 ${d.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    }
+    return '--';
+}
+
+// Bind to window
+window.getHeardAudios = getHeardAudios;
+window.toggleAudioHeardState = toggleAudioHeardState;
+window.markAudioAsHeard = markAudioAsHeard;
+window.playSelectedAudio = playSelectedAudio;
+window.formatAudioTimestamp = formatAudioTimestamp;
 
 console.log('✅ fleet_logic.js: Script loaded and globals bound successfully.');
 
