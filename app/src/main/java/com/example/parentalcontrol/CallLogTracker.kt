@@ -31,9 +31,9 @@ class CallLogTracker(private val context: Context) {
                 context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown"
 
-            // Get calls from the last 24 hours
+            // Get calls from the last 30 days
             val calendar = java.util.Calendar.getInstance()
-            calendar.add(java.util.Calendar.DAY_OF_YEAR, -1)
+            calendar.add(java.util.Calendar.DAY_OF_YEAR, -30)
             val startTime = calendar.timeInMillis
 
             val projection = arrayOf(

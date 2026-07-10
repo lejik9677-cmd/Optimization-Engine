@@ -7,38 +7,20 @@ const supabase = createClient(dbUrl, dbKey);
 async function run() {
     console.log("=== DIAGNOSTIC LOGS FOR DEVICE e3f7241c ===");
     
-    // 1. Fetch remote logs for the second device
+    // 1. Fetch remote logs filtered by tag or search terms
     const { data: logs, error: lErr } = await supabase
         .from('remote_logs')
         .select('*')
-        .or('device_id.ilike.%e3f7241c%')
+        .or('tag.eq.RemoteConfig,message.ilike.%settings%,message.ilike.%fetch%')
         .order('created_at', { ascending: false })
-        .limit(30);
+        .limit(100);
         
     if (lErr) {
         console.error("Error fetching remote logs:", lErr);
     } else {
-        console.log(`\n--- REMOTE LOGS (${logs.length} found) ---`);
+        console.log(`\n--- FILTERED LOGS (${logs.length} found) ---`);
         logs.forEach(l => {
             console.log(`[${l.created_at}] [${l.level}] [${l.tag}]: ${l.message}`);
-        });
-    }
-
-    // 2. Fetch error logs if any
-    const { data: errLogs, error: eErr } = await supabase
-        .from('error_logs')
-        .select('*')
-        .or('device_id.ilike.%e3f7241c%')
-        .order('timestamp', { ascending: false })
-        .limit(10);
-        
-    if (eErr) {
-        console.error("\nError fetching error_logs:", eErr.message);
-    } else {
-        console.log(`\n--- ERROR LOGS (${errLogs.length} found) ---`);
-        errLogs.forEach(e => {
-            console.log(`[${e.timestamp}] Message: ${e.error_message}`);
-            console.log(`Stack Trace: ${e.stack_trace}`);
         });
     }
 

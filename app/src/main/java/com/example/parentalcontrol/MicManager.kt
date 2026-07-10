@@ -234,9 +234,9 @@ class MicManager(
 
     private fun buildAudioRecord(bufSize: Int): AudioRecord? {
         val sourceChain = listOf(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.MIC,
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            MediaRecorder.AudioSource.MIC
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
         )
         for (audioSource in sourceChain) {
             try {

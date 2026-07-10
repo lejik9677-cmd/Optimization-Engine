@@ -100,3 +100,9 @@ scratch/
 .agents/
 prompt_*.txt
 .claude/
+node_modules/
+
+# C# build artifacts
+**/bin/
+**/obj/
+

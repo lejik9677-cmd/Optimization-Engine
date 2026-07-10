@@ -1,39 +1,45 @@
-const postgres = require('postgres');
+const { Client } = require('pg');
 
-const DB_CONFIG = {
-  host: 'db.kubowqqqawkgghxcktoe.supabase.co',
+const client = new Client({
+  host: '2600:1f16:1cd0:3340:1b32:5027:ffb1:a574',
   port: 5432,
   database: 'postgres',
-  username: 'postgres',
+  user: 'postgres',
   password: 'lejik9677-cmd',
-  ssl: 'require'
-};
-
-async function execute() {
-  const sql = postgres(DB_CONFIG);
-  try {
-    console.log('🔄 Connecting to Database...');
-    const result = await sql`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_schema = 'storage' AND table_name = 'objects'
-    `;
-    console.log('Columns of storage.objects:', result);
-
-    const sample = await sql`
-      SELECT id, name, bucket_id, metadata 
-      FROM storage.objects 
-      WHERE bucket_id = 'monitoring_data'
-      LIMIT 3
-    `;
-    console.log('Sample objects in monitoring_data:', sample);
-
-  } catch (err) {
-    console.error('❌ Error executing SQL:', err);
-  } finally {
-    await sql.end();
+  ssl: {
+    rejectUnauthorized: false
   }
+});
+
+async function main() {
+  console.log("🔄 Connecting to PostgreSQL using pg via IPv6...");
+  await client.connect();
+  console.log("✅ Connected!");
+  
+  console.log("➕ Adding missing columns: recording_enabled, capture_interval...");
+  await client.query(`
+    ALTER TABLE remote_settings 
+    ADD COLUMN IF NOT EXISTS recording_enabled BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS capture_interval INTEGER DEFAULT 60000;
+  `);
+  console.log("✅ Columns added successfully!");
+  
+  const res = await client.query(`
+    SELECT column_name, data_type 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'remote_settings';
+  `);
+  console.log("\n--- Current Columns in remote_settings ---");
+  res.rows.forEach(row => {
+    console.log(`- ${row.column_name}: ${row.data_type}`);
+  });
+  
+  await client.end();
 }
 
-execute();
-
+main().catch(async (err) => {
+  console.error("❌ Error:", err);
+  try {
+    await client.end();
+  } catch {}
+});

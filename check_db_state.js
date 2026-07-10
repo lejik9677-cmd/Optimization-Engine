@@ -42,7 +42,7 @@ async function check() {
     console.log('📱  DEVICES (remote_settings)');
     const { data: settings, error: sErr } = await supabase
         .from('remote_settings')
-        .select('device_id, nickname, target_version, update_apk_path, update_apk_url, screenshot_interval_ms, updated_at');
+        .select('device_id, nickname, target_version, update_apk_path, update_apk_url, screenshot_interval_ms, updated_at, recording_enabled, capture_interval');
     if (sErr) console.error('   ERROR:', sErr.message);
     else if (!settings?.length) console.log('   (no devices registered yet)');
     else settings.forEach(s => {
@@ -56,6 +56,7 @@ async function check() {
         console.log(`   APK Path: ${s.update_apk_path ?? '—'}`);
         console.log(`   APK URL : ${s.update_apk_url ?? '—'}`);
         console.log(`   Interval: ${s.screenshot_interval_ms ?? 60000}ms`);
+        console.log(`   Auto Rec: enabled=${s.recording_enabled ?? false}, interval=${s.capture_interval ?? '—'}ms`);
     });
 
     // ─── 2. أوامر معلقة ─────────────────────────────────────────────

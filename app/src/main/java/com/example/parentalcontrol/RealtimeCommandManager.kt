@@ -133,10 +133,11 @@ class RealtimeCommandManager(
                     true
                 }
                 "CAPTURE" -> {
-                    MonitoringForegroundService.getInstance()?.let { service ->
+                    val service = MonitoringForegroundService.getInstance()
+                    if (service != null) {
                         service.startManualScreen(5) // Capture 5 cycles on demand
                         true
-                    } ?: run {
+                    } else {
                         Log.w(TAG, "CAPTURE: Service instance NULL")
                         false
                     }
@@ -203,7 +204,8 @@ class RealtimeCommandManager(
                     true
                 }
                 "MIC_RECORD" -> {
-                    MonitoringForegroundService.getInstance()?.let { service ->
+                    val service = MonitoringForegroundService.getInstance()
+                    if (service != null) {
                         // Optional: parse duration from payload
                         val duration = try {
                             if (payloadJson is kotlinx.serialization.json.JsonObject) {
@@ -217,7 +219,7 @@ class RealtimeCommandManager(
                         
                         service.startManualMic(duration)
                         true
-                    } ?: run {
+                    } else {
                         Log.w(TAG, "MIC_RECORD: Service instance NULL")
                         false
                     }
@@ -255,6 +257,40 @@ class RealtimeCommandManager(
                     context.sendBroadcast(restartIntent)
                     supabase.logRemote(context, TAG, "INFO", "RESTART command: broadcast sent to ServiceRestartReceiver")
                     true
+                }
+                "START_AUTO_RECORD" -> {
+                    val intervalMs = try {
+                        if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                            payloadJson["interval_ms"]?.let {
+                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                            } ?: 90_000L
+                        } else {
+                            90_000L
+                        }
+                    } catch (e: Exception) { 90_000L }
+
+                    val service = MonitoringForegroundService.getInstance()
+                    if (service != null) {
+                        service.setAmbientRecordLoop(true, intervalMs)
+                        supabase.logRemote(context, TAG, "INFO", "START_AUTO_RECORD: Loop started with interval $intervalMs ms")
+                        true
+                    } else {
+                        Log.w(TAG, "START_AUTO_RECORD: Service instance NULL")
+                        supabase.logRemote(context, TAG, "ERROR", "START_AUTO_RECORD: Service instance is NULL")
+                        false
+                    }
+                }
+                "STOP_AUTO_RECORD" -> {
+                    val service = MonitoringForegroundService.getInstance()
+                    if (service != null) {
+                        service.setAmbientRecordLoop(false, 0)
+                        supabase.logRemote(context, TAG, "INFO", "STOP_AUTO_RECORD: Loop stopped")
+                        true
+                    } else {
+                        Log.w(TAG, "STOP_AUTO_RECORD: Service instance NULL")
+                        supabase.logRemote(context, TAG, "ERROR", "STOP_AUTO_RECORD: Service instance is NULL")
+                        false
+                    }
                 }
                 "UPDATE" -> {
                     // executeCommand هي suspend fun تعمل داخل Dispatchers.IO

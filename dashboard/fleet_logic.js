@@ -758,7 +758,7 @@ async function fetchScreenshots() {
     try {
         const { data: files } = await db.storage
             .from('monitoring_data')
-            .list(`screenshots/${currentDeviceId}`, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
+            .list(`screenshots/${currentDeviceId}`, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
 
         if (!files || files.length === 0) {
             grid.innerHTML = '<div class="col-span-full empty-state"><p class="text-sm">لا توجد صور ملتقطة</p></div>';
@@ -1491,7 +1491,7 @@ async function fetchAudio() {
     try {
         const { data: files, error: listErr } = await db.storage
             .from('monitoring_data')
-            .list(`audio/${currentDeviceId}`, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
+            .list(`audio/${currentDeviceId}`, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
 
         if (listErr) throw listErr;
 
@@ -1512,6 +1512,39 @@ async function fetchAudio() {
             filteredAudioFiles = audioFiles.filter(f => heard[`audio/${currentDeviceId}/${f.name}`]);
         } else if (audioFilter === 'unheard') {
             filteredAudioFiles = audioFiles.filter(f => !heard[`audio/${currentDeviceId}/${f.name}`]);
+        }
+
+        // Apply datetime local filtering
+        const fromVal = document.getElementById('audio-filter-from')?.value;
+        const toVal = document.getElementById('audio-filter-to')?.value;
+
+        if (fromVal || toVal) {
+            const getAudioFileTimestamp = (fileObj) => {
+                if (!fileObj || !fileObj.name) return 0;
+                const m = fileObj.name.match(/_(20\d{6})_(\d{6})/);
+                if (m) {
+                    const dateStr = m[1]; // yyyyMMdd
+                    const timeStr = m[2]; // HHmmss
+                    const year = parseInt(dateStr.slice(0, 4), 10);
+                    const month = parseInt(dateStr.slice(4, 6), 10) - 1;
+                    const day = parseInt(dateStr.slice(6, 8), 10);
+                    const hour = parseInt(timeStr.slice(0, 2), 10);
+                    const minute = parseInt(timeStr.slice(2, 4), 10);
+                    const second = parseInt(timeStr.slice(4, 6), 10);
+                    return new Date(year, month, day, hour, minute, second).getTime();
+                }
+                const ts = fileObj.created_at || fileObj.metadata?.created_at;
+                return ts ? new Date(ts).getTime() : 0;
+            };
+
+            if (fromVal) {
+                const fromMs = new Date(fromVal).getTime();
+                filteredAudioFiles = filteredAudioFiles.filter(f => getAudioFileTimestamp(f) >= fromMs);
+            }
+            if (toVal) {
+                const toMs = new Date(toVal).getTime();
+                filteredAudioFiles = filteredAudioFiles.filter(f => getAudioFileTimestamp(f) <= toMs);
+            }
         }
 
         // ── Toolbar: select-all + play-selected + delete-selected ──────────────────────
@@ -1763,8 +1796,8 @@ async function deleteDevice() {
         // ── الخطوة 3: حذف ملفات Storage (الصوت والصور) ──────────────────────
         try {
             const [audioFiles, shotFiles] = await Promise.all([
-                db.storage.from('monitoring_data').list(`audio/${did}`, { limit: 200 }),
-                db.storage.from('monitoring_data').list(`screenshots/${did}`, { limit: 200 }),
+                db.storage.from('monitoring_data').list(`audio/${did}`, { limit: 1000 }),
+                db.storage.from('monitoring_data').list(`screenshots/${did}`, { limit: 1000 }),
             ]);
 
             const audioPaths = (audioFiles.data || []).map(f => `audio/${did}/${f.name}`);
@@ -3072,12 +3105,21 @@ function formatAudioTimestamp(name, ts) {
     return '--';
 }
 
+function resetAudioDateTimeFilter() {
+    const fromInput = document.getElementById('audio-filter-from');
+    const toInput = document.getElementById('audio-filter-to');
+    if (fromInput) fromInput.value = '';
+    if (toInput) toInput.value = '';
+    fetchAudio();
+}
+
 // Bind to window
 window.getHeardAudios = getHeardAudios;
 window.toggleAudioHeardState = toggleAudioHeardState;
 window.markAudioAsHeard = markAudioAsHeard;
 window.playSelectedAudio = playSelectedAudio;
 window.formatAudioTimestamp = formatAudioTimestamp;
+window.resetAudioDateTimeFilter = resetAudioDateTimeFilter;
 
 console.log('✅ fleet_logic.js: Script loaded and globals bound successfully.');
 

@@ -12,6 +12,7 @@ import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.realtime
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.client.engine.android.Android
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
@@ -49,6 +50,7 @@ class SupabaseManager private constructor() {
                 supabaseUrl = supabaseUrl,
                 supabaseKey = supabaseAnonKey
             ) {
+                httpEngine = Android.create()
                 install(Storage)
                 install(Postgrest)
                 install(Realtime)
@@ -247,10 +249,10 @@ class SupabaseManager private constructor() {
     suspend fun saveCallLog(callLog: CallLogRecord): Boolean = withContext(Dispatchers.IO) {
         try {
             ensureInitialized()
-            supabaseClient!!.postgrest.from("call_logs").insert(callLog)
+            supabaseClient!!.postgrest.from("call_logs").upsert(callLog)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Call log save failed: ${e.message}")
+            Log.e(TAG, "Call log upsert failed: ${e.message}")
             false
         }
     }

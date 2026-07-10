@@ -12,8 +12,8 @@ android {
         applicationId = "com.example.parentalcontrol"
         minSdk = 24
         targetSdk = 34
-        versionCode = 56
-        versionName = "1.56"
+        versionCode = 66
+        versionName = "1.66"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

