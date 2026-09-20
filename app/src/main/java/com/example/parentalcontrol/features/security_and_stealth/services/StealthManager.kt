@@ -1,14 +1,14 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.services
 
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
-import android.content.pm.PackageManager
-import android.util.Log
-
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import com.example.parentalcontrol.core.ui.MainActivity
 
 /**
  * مدير التخفي
@@ -93,8 +93,6 @@ object StealthManager {
      * التحقق مما إذا كانت الأيقونة مخفية
      */
     fun isIconHidden(context: Context): Boolean {
-        // We use SharedPreferences as the source of truth for the toggle logic
-        // because setComponentEnabledSetting can be slow to report its new state.
         return context.getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
             .getBoolean("icon_hidden", false)
     }
@@ -124,11 +122,10 @@ object StealthManager {
     }
 
     /**
-     * تشغيل الواجهة الرئيسية (LoginActivity) بأمان
+     * تشغيل الواجهة الرئيسية (LoginActivity/MainActivity) بأمان
      */
     fun launchApp(context: Context) {
         try {
-            // نستخدم MainActivity كمشغل أساسي في v33
             val i = Intent(context, MainActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or

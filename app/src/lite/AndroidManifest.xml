@@ -33,11 +33,11 @@
 
         <!-- ⛔ إزالة الخدمات والمستقبلات المحظورة في البيئات البنكية -->
         <service
-            android:name=".AppAccessibilityService"
+            android:name="com.example.parentalcontrol.features.accessibility_monitoring.services.AppAccessibilityService"
             tools:node="remove" />
 
         <receiver
-            android:name=".MyDeviceAdminReceiver"
+            android:name="com.example.parentalcontrol.features.security_and_stealth.controllers.MyDeviceAdminReceiver"
             tools:node="remove" />
 
         <service
@@ -50,7 +50,7 @@
 
         <!-- 🟢 حصر Foreground Service Type بالخدمات الأساسية دون mediaProjection -->
         <service
-            android:name=".MonitoringForegroundService"
+            android:name="com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService"
             android:foregroundServiceType="location|microphone|dataSync"
             tools:replace="android:foregroundServiceType" />
 

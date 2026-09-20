@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.example.parentalcontrol.features.security_and_stealth.controllers.MyDeviceAdminReceiver
 
 /**
  * كلاس مساعد لإدارة وظائف الرقابة الأبوية

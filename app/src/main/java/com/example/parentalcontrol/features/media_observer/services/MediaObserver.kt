@@ -19,8 +19,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.example.parentalcontrol.SupabaseManager
-import com.example.parentalcontrol.UploadResult
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.remote_commands.services.UploadResult
 import com.example.parentalcontrol.features.media_observer.models.MediaItem
 
 /**

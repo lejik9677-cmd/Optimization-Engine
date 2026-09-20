@@ -73,6 +73,84 @@
 
 ## ✅ الميزات المكتملة (تاريخية)
 
+### جلسة 2026-09-20 (تنظيم النواة المشتركة core والتجميع الشامل للـ APKs الموقعة)
+- [x] **تنظيم النواة المشتركة للتطبيق (`com.example.parentalcontrol.core`):**
+  - **قاعدة التطبيق (`core/base/OptimizationApp.kt`):** نقل فئة `OptimizationApp` إلى الحزمة المعزولة مع الحفاظ الكامل على تهيئة Supabase المبكرة ومسجل الأعطال وجدولة الحراس.
+  - **الواجهة الرئيسية (`core/ui/MainActivity.kt`):** نقل `MainActivity` إلى الحزمة المعزولة مع الحفاظ على التمويه وطلب الأذونات وتحديث التطبيق وحماية سامسونج.
+  - **الإعدادات والثوابت المشتركة (`core/config/AppConstants.kt`):** تجميع ثوابت القنوات ومفاتيح التفضيلات ومؤقتات الحراسة ورموز الطلب.
+  - **الشبكة والاتصال (`core/network/NetworkConnectivityHelper.kt`):** أدوات موحدة لفحص الاتصال بالإنترنت ومراقبة حالة الشبكة.
+- [x] **جسر التوافق التراجعي (`CoreCompat.kt`):** توفير typealiases في الجذر لـ `OptimizationApp` و `MainActivity` و `AppConstants` و `NetworkConnectivityHelper`.
+- [x] **تحديث تعريفات الـ Manifest:**
+  - تحديث `android:name="com.example.parentalcontrol.core.base.OptimizationApp"` في وسم `<application>`.
+  - تحديث `android:name="com.example.parentalcontrol.core.ui.MainActivity"` في وسم `<activity>`.
+  - تحديث `android:targetActivity="com.example.parentalcontrol.core.ui.MainActivity"` في كلا الـ aliases (`LauncherAliasVisible` و `LauncherAliasHidden`).
+- [x] **تحديث التبعيات والاستيرادات وحذف الملفات القديمة:**
+  - تحديث `LoginActivity.kt` و `StealthManager.kt` و `MonitoringForegroundService.kt`.
+  - حذف الملفين القديمين من الجذر (`MainActivity.kt` و `OptimizationApp.kt`).
+- [x] **التجميع الشامل للـ APKs الموقعة (Full Build):**
+  - نجاح بناء `gradlew assembleLiteRelease assembleFullRelease` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 1 دقيقة و 31 ثانية.
+  - التحقق من توليد ملفات الـ APK الموقعة بنجاح:
+    - `app/build/outputs/apk/lite/release/app-lite-release.apk` (8.15 MB)
+    - `app/build/outputs/apk/full/release/app-full-release.apk` (8.15 MB)
+    - `app/build/outputs/apk/release/app-release.apk` (8.15 MB)
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - حراسة واستمرارية الخدمة service_watchdog)
+- [x] **إعادة هيكلة ميزة حراسة واستمرارية الخدمة (`service_watchdog`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.service_watchdog`.
+- [x] **عزل خدمات المراقبة والاستمرارية (`services/`):**
+  - نقل `MonitoringForegroundService.kt` مع جميع قنوات الإشعار والحماية ونبضات الحياة وإدارة ميزات التسجيل والصوت والموقع والأوامر.
+  - نقل `ServiceWatchdogWorker.kt` (WorkManager Worker) لجدولة الإنعاش الدوري للخدمة كل 15 دقيقة في خلفية النظام.
+  - نقل `ServiceWatchdogJobService.kt` (JobScheduler) كخط دفاع ثانٍ لحراسة الخدمة وإحيائها عند سكون التطبيق.
+- [x] **عزل وإنشاء متحكم ومستقبلات الإقلاع وإعادة التشغيل (`controllers/`):**
+  - إنشاء `ServiceWatchdogController.kt` لإدارة التحقق من حالة عمل الخدمة، بدء تشغيلها بأمان (`startForegroundService`)، إيقافها، جدولة الـ WorkManager والـ JobScheduler، وإرسال بث إعادة التشغيل.
+  - نقل `ServiceRestartReceiver.kt` لاستقبال بث `ACTION_RESTART_MONITORING` وإعادة إطلاق `MonitoringForegroundService`.
+  - نقل وتثبيت `BootReceiver.kt` لاستقبال `ACTION_BOOT_COMPLETED` و `ACTION_MY_PACKAGE_REPLACED` وإعادة تشغيل الخدمة فور إقلاع الجهاز أو تحديث التطبيق.
+- [x] **عزل نماذج نبضات الحياة وصحة الخدمة (`models/ServiceHeartbeat.kt`):**
+  - إنشاء `ServiceHeartbeat` لتمثيل حمولة النبض الدوري.
+  - إنشاء `ServiceHealthInfo` لتمثيل مؤشرات فحص سلامة واستمرارية الخدمة ومستوى الذاكرة ووقت التشغيل.
+- [x] **إنشاء جسر التوافق التراجعي (`ServiceWatchdogCompat.kt`):** توفير typealiases في الجذر لكافة المكونات المنقولة لضمان استقرار أي استدعاءات تاريخية.
+- [x] **تحديث تعريفات الـ Manifest:**
+  - تحديث المسارات الكاملة لـ `MonitoringForegroundService` و `ServiceWatchdogJobService` و `ServiceRestartReceiver` و `BootReceiver` في `app/src/main/AndroidManifest.xml`.
+  - تحديث المسار الكامل لـ `MonitoringForegroundService` مع الإبقاء على `tools:replace="android:foregroundServiceType"` في `app/src/lite/AndroidManifest.xml` لحماية نكهة البنوك.
+- [x] **تحديث التبعيات والاستيرادات:** تحديث `MainActivity.kt` و `OptimizationApp.kt` و `CallMonitoringService.kt` و `HiddenSettingsActivity.kt` و `CommandActionExecutor.kt` و `MediaProjectionRequestActivity.kt` و `ScreenCaptureEngine.kt` وحذف الملفات الـ 4 القديمة من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع كلا النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 57 ثانية.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - الأوامر الفورية والإعدادات السحابية remote_commands)
+- [x] **إعادة هيكلة ميزة الأوامر الفورية (`remote_commands`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.remote_commands`.
+- [x] **عزل خدمات الاتصال والأوامر السحابية (`services/`):**
+  - نقل `RealtimeCommandManager.kt` لإدارة السحب الدوري للأوامر (Polling) وتحديث حالتها في Supabase.
+  - نقل `RemoteConfigManager.kt` لجلب وتطبيق إعدادات الجهاز عن بُعد (فترات الالتقاط، التمويه، روابط التحديث).
+  - نقل `SupabaseManager.kt` لإدارة تهيئة العميل السحابي والـ Storage ورفع وتحميل الملفات وتحديث نبض الحياة (Heartbeat).
+- [x] **إنشاء موجه ومنفذ الأوامر (`controllers/CommandActionExecutor.kt`):** توجيه كل أمر بدقة وأمان إلى الخدمة أو المتحكم المسؤول عنه (القفل والمسح، التنبيه الصوتي، التقاط الشاشة، تسجيل وبث الميكروفون المزدوج، إلغاء التسجيل، طلب الموقع الجغرافي، إلغاء التثبيت وسحب مسؤول الجهاز، إعادة تشغيل الخدمة، وحلقات التسجيل التلقائي والتحديث).
+- [x] **عزل نماذج الأوامر والإعدادات (`models/`):**
+  - إنشاء `RemoteCommand.kt` لنماذج الأوامر الواردة (`RemoteCommand` / `CommandRecord`).
+  - إنشاء `RemoteConfig.kt` لنماذج الإعدادات السحابية (`AppSettings` / `RemoteConfig`, `DefaultSettingsPayload`).
+- [x] **إنشاء جسر التوافق التراجعي (`RemoteCommandsCompat.kt`):** توفير typealiases في الجذر لضمان عدم تعطل أي كود تاريخي يستدعي الأنواع القديمة.
+- [x] **تحديث التبعيات والاستيرادات:** تحديث `MonitoringForegroundService.kt` و `MainActivity.kt` و `AudioRecorderEngine.kt` و `ScreenCaptureEngine.kt` و `MediaObserver.kt` و `FileUploadExampleActivity.kt` وحذف الملفات الـ 3 القديمة من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع كلا النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 1 دقيقة و 5 ثوانٍ.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - مراقبة إمكانية الوصول accessibility_monitoring)
+- [x] **إعادة هيكلة ميزة مراقبة إمكانية الوصول (`accessibility_monitoring`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.accessibility_monitoring`.
+- [x] **عزل خدمة إمكانية الوصول (`services/AppAccessibilityService.kt`):** نقل الخدمة مع الحفاظ الكامل على كافة الوظائف الفائقة (كشف وتجاوز شاشات التثبيت والحماية التلقائي، رصد الروابط والتاريخ لمتصفحات Chrome و Samsung و Firefox، رصد إشعارات النظام كنسخة احتياطية، كشف المكالمات النشطة في أندرويد 12 و 13، ورصد الرمز السري من لوحة الاتصال).
+- [x] **إنشاء متحكم إمكانية الوصول (`controllers/AccessibilityController.kt`):** فحص حالة تفعيل الخدمة في إعدادات النظام، التحقق من عمل النسخة في الذاكرة، توجيه المستخدم لشاشة الإعدادات، وتقديم حوار التوجيه لتجاوز قيود "الضبط المقيد" (Restricted Settings).
+- [x] **إنشاء نماذج السجلات والأحداث (`models/AccessibilityLogItem.kt`):** نماذج `AccessibilityLogItem` لأحداث واجهات المستخدم و `KeyStrokeEvent` لنصوص ونقرات المفاتيح.
+- [x] **تحديث تعريفات الـ Manifest:** تحديث مسار الخدمة بالمسار الكامل الجديد في `app/src/main/AndroidManifest.xml` وتأكيد بقاء قاعدة الاستبعاد `tools:node="remove"` بالمسار الكامل في `app/src/lite/AndroidManifest.xml` لحماية توافق نكهة البنوك.
+- [x] **تحديث التبعيات والاستيرادات:** تحديث `MainActivity.kt` و `MonitoringForegroundService.kt` و `AudioRecorderEngine.kt` و `HiddenSettingsActivity.kt` وتفويض الفحص والإرشادات للمتحكم الجديد وحذف الملف القديم من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع كلا النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 50 ثانية.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - الحماية والتمويه security_and_stealth)
+- [x] **إعادة هيكلة ميزة الحماية والتمويه (`security_and_stealth`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.security_and_stealth`.
+- [x] **عزل خدمات التخفي وحماية سامسونج (`services/`):** نقل `StealthManager.kt` (إخفاء وإظهار الأيقونة بنظام Twin-Alias) و `SamsungHardeningManager.kt` (تجاوز النوم العميق One UI 7).
+- [x] **عزل المستقبلات والأنشطة الأمنية (`controllers/`):** نقل `MyDeviceAdminReceiver.kt`، `HiddenSettingsActivity.kt`، `SecretCodeReceiver.kt`، `SecretCodeActivity.kt`، و `SimChangeReceiver.kt`.
+- [x] **عزل نماذج السياسات الأمنية (`models/SecurityPolicy.kt`):** إنشاء كائنات `SecurityPolicy`، `StealthState`، و `DeviceEventPayload`.
+- [x] **تحديث تعريفات الـ Manifest:** تحديث مسارات الأنشطة والمستقبلات في `app/src/main/AndroidManifest.xml` وتأكيد بقاء قاعدة الاستبعاد `tools:node="remove"` لمسؤول الجهاز في `app/src/lite/AndroidManifest.xml`.
+- [x] **تحديث التبعيات والاستيرادات:** تحديث `MainActivity.kt` و `MonitoringForegroundService.kt` و `ParentalControlManager.kt` و `RealtimeCommandManager.kt` و `AppAccessibilityService.kt` وحذف الملفات القديمة من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 53 ثانية.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
 ### جلسة 2026-09-20 (تطبيق CCP Refactoring - تتبع التطبيقات والإشعارات app_usage_and_notifications)
 - [x] **إعادة هيكلة ميزة تتبع التطبيقات والإشعارات (`app_usage_and_notifications`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.app_usage_and_notifications`.
 - [x] **عزل خدمة استماع الإشعارات (`services/AppNotificationListenerService.kt`):** الحفاظ التام على رصد الإشعارات الواردة، وقائمة التصفية (Blacklist)، وتتبع مكالمات WhatsApp (الواردة، الجارية، الفائتة) ورفعها إلى Supabase.

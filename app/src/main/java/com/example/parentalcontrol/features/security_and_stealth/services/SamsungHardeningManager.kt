@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.services
 
 import android.content.ActivityNotFoundException
 import android.content.Context

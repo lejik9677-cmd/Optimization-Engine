@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.controllers
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -7,6 +7,8 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.features.security_and_stealth.services.StealthManager
 
 /**
  * SecretCodeReceiver v29 (Total Stealth Edition)
@@ -58,7 +60,7 @@ class SecretCodeReceiver : BroadcastReceiver() {
     private fun handleActivation(context: Context) {
         try {
             // Log to remote for debugging (Run in background as it's a suspend function)
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     SupabaseManager.getInstance().logRemote(context, TAG, "INFO", "Secret Code Activation triggered")
                 } catch (e: Exception) {

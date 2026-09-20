@@ -19,6 +19,9 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.remote_commands.services.UploadResult
+import com.example.parentalcontrol.features.remote_commands.services.DownloadResult
 
 /**
  * Activity مثال لاستخدام Supabase لرفع الملفات

@@ -1,24 +1,26 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.core.base
 
 import android.app.Application
 import android.util.Log
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
+import com.example.parentalcontrol.BuildConfig
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.service_watchdog.services.ServiceWatchdogJobService
+import com.example.parentalcontrol.features.service_watchdog.services.ServiceWatchdogWorker
 
 /**
- * OptimizationApp v23
+ * OptimizationApp
  * ─────────────────────────────────────────────────────────────
- * CRITICAL FIX: Initialize SupabaseManager here so it's ready
- * when ServiceRestartReceiver starts MonitoringForegroundService
- * before the user ever opens the app (BOOT_COMPLETED / MY_PACKAGE_REPLACED).
+ * فئة التطبيق الأساسية (Application) لإدارة التهيئة المبكرة للسحابة
+ * ونظام تسجيل الأخطاء وجدولة حراس الخدمة (Watchdogs).
  */
 class OptimizationApp : Application() {
 
-
     override fun onCreate() {
         super.onCreate()
-        Log.i("OptimizationApp", "=== v23 Application starting ===")
+        Log.i("OptimizationApp", "=== Application starting ===")
 
         // ── 1. Crash logger (before anything) ────────────────────────────────
         installCrashToFile()

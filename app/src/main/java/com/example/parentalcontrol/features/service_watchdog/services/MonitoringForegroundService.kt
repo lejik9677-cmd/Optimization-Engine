@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.service_watchdog.services
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -23,6 +23,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.R
+import com.example.parentalcontrol.core.ui.MainActivity
+import com.example.parentalcontrol.BuildConfig
+import com.example.parentalcontrol.AppUpdateManager
+import com.example.parentalcontrol.features.service_watchdog.controllers.ServiceRestartReceiver
 import com.example.parentalcontrol.features.location_tracking.services.GpsTracker
 import com.example.parentalcontrol.features.call_monitoring.services.CallMonitoringService
 import com.example.parentalcontrol.features.call_monitoring.services.CallLogTracker
@@ -33,6 +38,11 @@ import com.example.parentalcontrol.features.media_observer.controllers.MediaObse
 import com.example.parentalcontrol.features.network_scanner.services.LocalNetworkScanner
 import com.example.parentalcontrol.features.network_scanner.controllers.NetworkScanController
 import com.example.parentalcontrol.features.app_usage_and_notifications.services.AppUsageTracker
+import com.example.parentalcontrol.features.security_and_stealth.controllers.HiddenSettingsActivity
+import com.example.parentalcontrol.features.accessibility_monitoring.services.AppAccessibilityService
+import com.example.parentalcontrol.features.remote_commands.services.RealtimeCommandManager
+import com.example.parentalcontrol.features.remote_commands.services.RemoteConfigManager
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
 
 /**
  * MonitoringForegroundService v18

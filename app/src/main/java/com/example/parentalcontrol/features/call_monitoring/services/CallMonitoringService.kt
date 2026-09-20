@@ -10,8 +10,8 @@ import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
-import com.example.parentalcontrol.MonitoringForegroundService
-import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

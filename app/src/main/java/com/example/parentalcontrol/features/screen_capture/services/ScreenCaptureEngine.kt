@@ -20,9 +20,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.app.usage.UsageStatsManager
-import com.example.parentalcontrol.SupabaseManager
-import com.example.parentalcontrol.UploadResult
-import com.example.parentalcontrol.MonitoringForegroundService
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.remote_commands.services.UploadResult
+import com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService
 import com.example.parentalcontrol.features.screen_capture.models.CaptureConfig
 
 /**

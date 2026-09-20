@@ -1,10 +1,11 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.service_watchdog.controllers
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
+import com.example.parentalcontrol.features.service_watchdog.services.MonitoringForegroundService
 
 /**
  * ServiceRestartReceiver v23

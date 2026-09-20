@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.controllers
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -9,7 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import io.github.jan.supabase.postgrest.from
-import kotlinx.serialization.Serializable
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.features.security_and_stealth.models.DeviceEventPayload
 
 /**
  * SimChangeReceiver v16
@@ -100,11 +101,3 @@ class SimChangeReceiver : BroadcastReceiver() {
         else -> "Unknown"
     }
 }
-
-@Serializable
-data class DeviceEventPayload(
-    val device_id: String,
-    val type: String,
-    val details: String
-)
-

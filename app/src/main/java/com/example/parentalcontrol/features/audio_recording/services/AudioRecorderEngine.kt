@@ -5,10 +5,10 @@ import android.media.AudioManager
 import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
-import com.example.parentalcontrol.AppAccessibilityService
+import com.example.parentalcontrol.features.accessibility_monitoring.services.AppAccessibilityService
 import com.example.parentalcontrol.MonitoringForegroundService
-import com.example.parentalcontrol.SupabaseManager
-import com.example.parentalcontrol.UploadResult
+import com.example.parentalcontrol.features.remote_commands.services.SupabaseManager
+import com.example.parentalcontrol.features.remote_commands.services.UploadResult
 import com.example.parentalcontrol.features.audio_recording.controllers.MicManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

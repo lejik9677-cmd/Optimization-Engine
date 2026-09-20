@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.controllers
 
 import android.app.admin.DeviceAdminReceiver
 import android.content.Context
@@ -58,7 +58,7 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
      */
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
-        Log.i(TAG, "Device Admin disabled")
+        Log.w(TAG, "Device Admin disabled")
         Toast.makeText(
             context,
             "تم تعطيل الرقابة الأبوية",
@@ -66,37 +66,18 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
         ).show()
     }
 
-    /**
-     * يتم استدعاء هذه الدالة عندما يفشل المستخدم في إدخال كلمة المرور الصحيحة
-     */
-    override fun onPasswordFailed(context: Context, intent: Intent) {
-        super.onPasswordFailed(context, intent)
-        Log.w(TAG, "Password failed attempt detected")
-        Toast.makeText(
-            context,
-            "محاولة إدخال كلمة مرور خاطئة",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    /**
-     * يتم استدعاء هذه الدالة عندما ينجح المستخدم في إدخال كلمة المرور
-     */
-    override fun onPasswordSucceeded(context: Context, intent: Intent) {
-        super.onPasswordSucceeded(context, intent)
-        Log.i(TAG, "Password succeeded")
-    }
-
-    /**
-     * يتم استدعاء هذه الدالة عندما يتم تغيير كلمة المرور
-     */
     override fun onPasswordChanged(context: Context, intent: Intent) {
         super.onPasswordChanged(context, intent)
-        Log.i(TAG, "Password changed")
-        Toast.makeText(
-            context,
-            "تم تغيير كلمة المرور",
-            Toast.LENGTH_SHORT
-        ).show()
+        Log.i(TAG, "Device password changed")
+    }
+
+    override fun onPasswordFailed(context: Context, intent: Intent) {
+        super.onPasswordFailed(context, intent)
+        Log.w(TAG, "Failed password attempt detected")
+    }
+
+    override fun onPasswordSucceeded(context: Context, intent: Intent) {
+        super.onPasswordSucceeded(context, intent)
+        Log.i(TAG, "Device unlocked successfully")
     }
 }

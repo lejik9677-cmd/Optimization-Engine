@@ -1,8 +1,9 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.security_and_stealth.controllers
 
 import android.app.Activity
 import android.os.Bundle
 import android.util.Log
+import com.example.parentalcontrol.features.security_and_stealth.services.StealthManager
 
 /**
  * SecretCodeActivity v29 (Trampoline)

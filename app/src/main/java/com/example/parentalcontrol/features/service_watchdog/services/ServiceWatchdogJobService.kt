@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.service_watchdog.services
 
 import android.app.ActivityManager
 import android.app.job.JobInfo

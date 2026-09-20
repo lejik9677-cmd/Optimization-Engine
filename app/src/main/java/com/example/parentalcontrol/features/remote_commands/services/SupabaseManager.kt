@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.remote_commands.services
 
 import android.content.Context
 import android.util.Log
@@ -24,7 +24,7 @@ import com.example.parentalcontrol.features.location_tracking.models.LocationSav
 import com.example.parentalcontrol.features.call_monitoring.models.CallLogRecord
 
 /**
- * مدير Supabase للتعامل مع رفع الملفات والبيانات
+ * مدير Supabase للتعامل مع رفع الملفات والبيانات وتدفقات الأوامر
  */
 class SupabaseManager private constructor() {
 
@@ -182,7 +182,6 @@ class SupabaseManager private constructor() {
     suspend fun downloadFile(bucket: String, remotePath: String, localFile: java.io.File): Boolean = withContext(Dispatchers.IO) {
         try {
             ensureInitialized()
-            // downloadAuthenticated يدعم البuckets الخاصة (private) باستخدام الـ anon key
             val bytes = supabaseClient!!.storage.from(bucket).downloadAuthenticated(remotePath)
             localFile.writeBytes(bytes)
             Log.i(TAG, "Downloaded $remotePath → ${localFile.length()} bytes")
@@ -200,7 +199,6 @@ class SupabaseManager private constructor() {
                 context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown"
             
-            // نحدث وقت آخر ظهور في جدول الإعدادات مع إرسال معلومات الإصدار والجهاز
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                 packageInfo.longVersionCode.toInt()
@@ -230,7 +228,6 @@ class SupabaseManager private constructor() {
             false
         }
     }
-
 
     suspend fun saveLocation(locationData: LocationData): LocationSaveResult = withContext(Dispatchers.IO) {
         try {
@@ -374,7 +371,6 @@ data class HeartbeatPayload(
     val device_info: String,
     val updated_at: String
 )
-
 
 sealed class UploadResult {
     data class Success(val fileName: String, val filePath: String, val publicUrl: String, val fileSize: Long, val bucket: String) : UploadResult()
