@@ -15,11 +15,6 @@ import java.io.StringWriter
  */
 class OptimizationApp : Application() {
 
-    companion object {
-        private const val SUPABASE_URL = "https://kubowqqqawkgghxcktoe.supabase.co"
-        private const val SUPABASE_KEY =
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM"
-    }
 
     override fun onCreate() {
         super.onCreate()
@@ -33,7 +28,10 @@ class OptimizationApp : Application() {
         // (BOOT / MY_PACKAGE_REPLACED) BEFORE the user opens the app.
         // If SupabaseManager is not initialized here, any logRemote() call crashes.
         try {
-            SupabaseManager.getInstance().initialize(SUPABASE_URL, SUPABASE_KEY)
+            SupabaseManager.getInstance().initialize(
+                BuildConfig.SUPABASE_URL,
+                BuildConfig.SUPABASE_KEY
+            )
             Log.i("OptimizationApp", "Supabase initialized ✅")
         } catch (e: Exception) {
             Log.e("OptimizationApp", "Supabase init failed: ${e.message}")

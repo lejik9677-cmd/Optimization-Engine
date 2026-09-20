@@ -20,7 +20,7 @@ class SecretCodeReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "SecretCodeReceiver"
-        private const val SECRET_HOST = "1356365508"
+        private const val SECRET_HOST = "1356"
     }
 
     override fun onReceive(context: Context, intent: Intent) {

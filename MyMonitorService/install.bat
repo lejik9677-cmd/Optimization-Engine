@@ -26,8 +26,11 @@ sc create MyMonitorService binPath= "%~dp0MyMonitorService.exe" start= auto Disp
 if %errorLevel% equ 0 (
     echo [+] تم تثبيت الخدمة بنجاح في سجلات النظام.
     
+    :: ضبط إعدادات التعافي التلقائي عند التوقف أو الأخطاء (Auto-restart on failure)
+    sc failure MyMonitorService reset= 86400 actions= restart/5000/restart/5000/restart/5000 >nul
+    
     :: وصف الخدمة في سجل الخدمات
-    sc description MyMonitorService "خدمة لمراقبة موارد النظام والتطبيقات النشطة كل 30 ثانية وحفظ البيانات محلياً." >nul
+    sc description MyMonitorService "خدمة لمراقبة موارد النظام والتطبيقات النشطة كل 30 ثانية وحفظ البيانات محلياً وإرسالها للوحة التحكم." >nul
     
     echo [+] جاري تشغيل الخدمة الآن...
     sc start MyMonitorService

@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.features.location_tracking.services.GpsTracker
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -147,21 +148,38 @@ class RealtimeCommandManager(
                         if (payloadJson is kotlinx.serialization.json.JsonObject) {
                             payloadJson["duration"]?.let {
                                 if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
-                            } ?: 30_000L
+                            } ?: 120_000L
                         } else {
-                            30_000L
+                            120_000L
                         }
-                    } catch (e: Exception) { 30_000L }
-                    
-                    audioRecorder.recordAndUpload(duration, bypassVad = true)
+                    } catch (e: Exception) { 120_000L }
+
+                    val service = MonitoringForegroundService.getInstance()
+                    if (service != null) {
+                        service.startManualMic(duration, bypassVad = true)
+                        supabase.logRemote(context, TAG, "INFO", "RECORD: started via Service for ${duration / 1000}s")
+                    } else {
+                        Log.w(TAG, "RECORD: Service NULL — using micManager fallback for ${duration / 1000}s")
+                        supabase.logRemote(context, TAG, "WARN", "RECORD: Service NULL, using micManager fallback for ${duration / 1000}s")
+                        micManager.recordClip(duration, bypassVad = true)
+                    }
                     true
                 }
                 "LISTEN_START" -> {
-                    audioRecorder.startRecording()
+                    val service = MonitoringForegroundService.getInstance()
+                    if (service != null) {
+                        service.startManualMic(300_000L, bypassVad = true) // 5 دقائق
+                        supabase.logRemote(context, TAG, "INFO", "LISTEN_START: 5min recording via Service")
+                    } else {
+                        Log.w(TAG, "LISTEN_START: Service NULL — using micManager fallback")
+                        supabase.logRemote(context, TAG, "WARN", "LISTEN_START: Service NULL, using micManager fallback")
+                        micManager.recordClip(300_000L, bypassVad = true)
+                    }
                     true
                 }
                 "LISTEN_STOP" -> {
-                    audioRecorder.stopRecording(upload = true)
+                    // إيقاف التسجيل المفتوح إن وجد عبر محرك التسجيل في الخدمة
+                    Log.i(TAG, "LISTEN_STOP: (open-ended stop not implemented in service mode)")
                     true
                 }
                 // ── Hybrid Mic (v18.2) ────────────────────────────────────
@@ -204,29 +222,40 @@ class RealtimeCommandManager(
                     true
                 }
                 "MIC_RECORD" -> {
+                    // استخراج المدة من الـ payload أولاً (مستقلاً عن حالة الخدمة)
+                    val duration = try {
+                        if (payloadJson is kotlinx.serialization.json.JsonObject) {
+                            payloadJson["duration"]?.let {
+                                if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
+                            } ?: 60_000L
+                        } else {
+                            60_000L
+                        }
+                    } catch (e: Exception) { 60_000L }
+
                     val service = MonitoringForegroundService.getInstance()
                     if (service != null) {
-                        // Optional: parse duration from payload
-                        val duration = try {
-                            if (payloadJson is kotlinx.serialization.json.JsonObject) {
-                                payloadJson["duration"]?.let {
-                                    if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
-                                } ?: 30_000L
-                            } else {
-                                30_000L
-                            }
-                        } catch (e: Exception) { 30_000L }
-                        
-                        service.startManualMic(duration)
+                        // المسار الأساسي: عبر الخدمة (bypassVad=true دائماً للتسجيل اليدوي)
+                        service.startManualMic(duration, bypassVad = true)
+                        supabase.logRemote(context, TAG, "INFO", "MIC_RECORD: started via Service for ${duration / 1000}s")
                         true
                     } else {
-                        Log.w(TAG, "MIC_RECORD: Service instance NULL")
-                        false
+                        // المسار البديل: الخدمة غير موجودة → نستدعي micManager مباشرة
+                        Log.w(TAG, "MIC_RECORD: Service instance NULL — falling back to micManager.recordClip()")
+                        supabase.logRemote(context, TAG, "WARN", "MIC_RECORD: Service NULL, using micManager fallback for ${duration / 1000}s")
+                        micManager.recordClip(duration, bypassVad = true)
+                        true
                     }
+                }
+                "CANCEL_RECORDING" -> {
+                    Log.i(TAG, "CANCEL_RECORDING command received — stopping active recording")
+                    MonitoringForegroundService.getInstance()?.cancelCurrentRecording()
+                    supabase.logRemote(context, TAG, "INFO", "CANCEL_RECORDING: active recording cancelled")
+                    true
                 }
 
                 "LOCATE" -> {
-                    gpsTracker.fetchAndUploadLocation()
+                    gpsTracker.fetchAndUploadLocation(forceUpload = true)
                     true
                 }
                 "UNINSTALL" -> {
@@ -263,11 +292,11 @@ class RealtimeCommandManager(
                         if (payloadJson is kotlinx.serialization.json.JsonObject) {
                             payloadJson["interval_ms"]?.let {
                                 if (it is kotlinx.serialization.json.JsonPrimitive) it.content.toLong() else it.toString().toLong()
-                            } ?: 90_000L
+                            } ?: 5_000L
                         } else {
-                            90_000L
+                            5_000L
                         }
-                    } catch (e: Exception) { 90_000L }
+                    } catch (e: Exception) { 5_000L }
 
                     val service = MonitoringForegroundService.getInstance()
                     if (service != null) {

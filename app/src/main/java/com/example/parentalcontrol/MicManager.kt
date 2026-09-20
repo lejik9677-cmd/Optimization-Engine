@@ -57,8 +57,13 @@ class MicManager(
         /** Duration of each PCM chunk broadcast to the dashboard (ms). */
         private const val CHUNK_MS = 200L
 
+        /** Maximum live stream duration before auto-stopping to prevent accidental data drain (5 minutes). */
+        private const val MAX_STREAM_DURATION_MS = 5 * 60 * 1000L
+
         /** Bytes per chunk: 16 kHz × 200 ms × 2 bytes/sample (PCM_16BIT, mono). */
         private val CHUNK_BYTES = (SAMPLE_RATE * CHUNK_MS / 1000 * 2).toInt()  // = 6 400
+
+        @Volatile var isLiveStreamingActive = false
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -83,13 +88,24 @@ class MicManager(
      */
     fun startStream(deviceId: String) {
         if (isStreaming) { Log.w(TAG, "Already streaming — ignored"); return }
+
         isStreaming = true
+        isLiveStreamingActive = true
 
         streamJob = scope.launch(Dispatchers.IO) {
+            // 🛑 Stop any background file recording to release hardware microphone
+            try {
+                audioEngine.stopRecording(upload = false)
+                kotlinx.coroutines.delay(300)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to stop background audioEngine prior to mic stream: ${e.message}")
+            }
+
             val client = SupabaseManager.getInstance().getClient()
             if (client == null) {
                 Log.e(TAG, "Supabase client is null — cannot start stream")
                 isStreaming = false
+                isLiveStreamingActive = false
                 return@launch
             }
 
@@ -103,7 +119,7 @@ class MicManager(
 
             // Upgrade service to microphone type dynamically
             MonitoringForegroundService.getInstance()?.upgradeToMicType()
-            kotlinx.coroutines.delay(200) // Give OS a moment to register the foreground type
+            kotlinx.coroutines.delay(300) // Give OS a moment to register the foreground type
 
             val record = buildAudioRecord(bufSize)
             if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
@@ -112,6 +128,7 @@ class MicManager(
                 try { record?.release() } catch (_: Exception) {}
                 MonitoringForegroundService.getInstance()?.downgradeFromMicType()
                 isStreaming = false
+                isLiveStreamingActive = false
                 return@launch
             }
             activeRecord = record
@@ -120,8 +137,8 @@ class MicManager(
                 Log.i(TAG, "Connecting to Supabase Realtime socket...")
                 client.realtime.connect()
 
-                // Subscribe FIRST, then start recording
-                realtimeChannel.subscribe(blockUntilSubscribed = false)
+                // Subscribe to channel FIRST, ensuring broadcast receives subscribers
+                realtimeChannel.subscribe(blockUntilSubscribed = true)
                 record.startRecording()
 
                 Log.i(TAG, "MIC_STREAM started → $channelName")
@@ -129,13 +146,27 @@ class MicManager(
                     context, TAG, "INFO", "Live mic stream started → $channelName"
                 )
 
+                val streamStartTime = System.currentTimeMillis()
                 val buffer = ShortArray(CHUNK_BYTES / 2)   // samples per chunk
                 var silentChunksCount = 0
+                var conflictCheckTick = 0
+                val CONFLICT_CHECK_EVERY_CHUNKS = 10 // ≈ every 2 s (10 × 200 ms chunks)
 
                 while (isStreaming && isActive) {
+                    // ── Safety auto-timeout check (5 minutes max) ──────────
+                    if (System.currentTimeMillis() - streamStartTime > MAX_STREAM_DURATION_MS) {
+                        Log.i(TAG, "⏱️ MIC_STREAM auto-timeout reached (5 min) — stopping stream to save data")
+                        SupabaseManager.getInstance().logRemote(
+                            context, TAG, "INFO", "Live mic stream auto-closed after 5 min safety limit"
+                        )
+                        isStreaming = false
+                        isLiveStreamingActive = false
+                        break
+                    }
+
                     val readCount = record.read(buffer, 0, buffer.size)
 
-                    if (readCount > 0) {
+                    if (readCount > 0 && isStreaming) {
                         var isSilent = true
                         for (i in 0 until readCount) {
                             if (buffer[i] != 0.toShort()) {
@@ -162,16 +193,34 @@ class MicManager(
                         }
                         val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
-                        // Broadcast to dashboard
-                        realtimeChannel.broadcast(
-                            event = "audio_chunk",
-                            message = buildJsonObject {
-                                put("chunk", b64)
-                                put("sr",    SAMPLE_RATE)
-                                put("ts",    System.currentTimeMillis())
-                            }
-                        )
+                        // Broadcast to dashboard (both audio_chunk and pcm-chunk for full compatibility)
+                        val payloadObj = buildJsonObject {
+                            put("chunk", b64)
+                            put("sr",    SAMPLE_RATE)
+                            put("ts",    System.currentTimeMillis())
+                        }
+                        realtimeChannel.broadcast(event = "audio_chunk", message = payloadObj)
+                        realtimeChannel.broadcast(event = "pcm-chunk",   message = payloadObj)
                     }
+
+                    // ── Dynamic Mic Conflict Guard (every ~2 s) ────────────────────
+                    // If user opens WhatsApp/Phone/Camera and starts recording,
+                    // we stop live streaming immediately to free the microphone.
+                    conflictCheckTick++
+                    if (conflictCheckTick >= CONFLICT_CHECK_EVERY_CHUNKS) {
+                        conflictCheckTick = 0
+                        if (AudioRecorderEngine.isMicBusyByAnotherApp(context)) {
+                            Log.w(TAG, "🛑 MIC_STREAM: Conflict detected — user app grabbed mic. Stopping live stream silently.")
+                            SupabaseManager.getInstance().logRemote(
+                                context, TAG, "WARN",
+                                "🛑 Live stream auto-stopped: user app took microphone (WhatsApp/Phone/etc.)"
+                            )
+                            isStreaming = false  // exits the while loop cleanly
+                            isLiveStreamingActive = false
+                            break
+                        }
+                    }
+
                     // Small yield to avoid tight-spin on slow devices
                     delay(10L)
                 }
@@ -183,6 +232,7 @@ class MicManager(
                 )
             } finally {
                 isStreaming = false
+                isLiveStreamingActive = false
                 try { record.stop();  record.release()             } catch (_: Exception) {}
                 if (activeRecord == record) {
                     activeRecord = null
@@ -202,6 +252,7 @@ class MicManager(
      */
     fun stopStream() {
         isStreaming = false
+        isLiveStreamingActive = false
         try {
             activeRecord?.stop()
             activeRecord?.release()
@@ -211,6 +262,7 @@ class MicManager(
         activeRecord = null
         streamJob?.cancel()
         streamJob = null
+        MonitoringForegroundService.getInstance()?.downgradeFromMicType()
     }
 
     fun isStreaming() = isStreaming
@@ -234,9 +286,9 @@ class MicManager(
 
     private fun buildAudioRecord(bufSize: Int): AudioRecord? {
         val sourceChain = listOf(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION, // Priority 1: VoIP source — exempt from Android background audio silencing
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            MediaRecorder.AudioSource.MIC
         )
         for (audioSource in sourceChain) {
             try {

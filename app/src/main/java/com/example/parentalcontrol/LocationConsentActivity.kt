@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.features.location_tracking.controllers.LocationTrackerManager
 
 /**
  * Activity للحصول على موافقة المستخدم على تتبع الموقع

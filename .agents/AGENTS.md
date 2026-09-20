@@ -1,30 +1,62 @@
 # Workspace Rules for Antigravity Agent
 
 ## Language Requirements
-- **Arabic Output**: All communication with the user, summaries, and walkthroughs should be written in **Arabic** (اللغة العربية) by default when interacting with Arabic-speaking users.
+- **Arabic Output**: All communication, summaries, and walkthroughs must be written in **Arabic** when interacting with Arabic-speaking users.
+
+## Deployment Rules
+- **Signed APK only**: Always build `assembleRelease` (not debug). The release build uses `signingConfig = debug` so it produces a signed installable APK.
+- **Deploy command**: Use `node deploy.js <version>` — never create new `push_vXX.js` scripts.
+- **Version bump**: Increment `versionCode` and `versionName` in `app/build.gradle.kts` before every deployment.
+- **Automated Version & QR Sync**: All deployments via `node deploy.js <version>` MUST automatically synchronize direct APK download links, version badges, QR Code generator API URLs (`api.qrserver.com`), and cache-busting query strings in both `downloads.html` and `index.html`.
+- **Bust browser cache**: After editing `fleet_logic.js` or CSS, always bump the version query string in `index.html` (e.g. `fleet_logic.js?v=10.5`).
+
+## Security Rules
+- **No hardcoded secrets**: Supabase keys must live in `local.properties` (Android) and `.env` (Node.js). Never paste raw JWT tokens in source files.
+- **No commit of `.env`**: It is already in `.gitignore`. Never remove it from there.
+- **BuildConfig for Android**: Access credentials via `BuildConfig.SUPABASE_URL` and `BuildConfig.SUPABASE_KEY` — never inline strings.
 
 ## Audio Vault Formatting
-- **Audio Record Timestamp**: In the Audio Vault list (`fetchAudio` in `fleet_logic.js`), always display the exact date and time (including hours, minutes, and seconds) extracted from the filename (`yyyyMMdd_HHmmss` format) instead of displaying only a relative time like "3m" or "2h". For example, use the `formatAudioTimestamp(filename, created_at)` helper to format it as: `📅 DD/MM/YYYY - 🕒 HH:MM:SS`.
+- **Timestamp display**: In the Audio Vault list (`fetchAudio` in `fleet_logic.js`), always display the exact date and time extracted from the filename (`yyyyMMdd_HHmmss`) using the `formatAudioTimestamp()` helper:
+  `📅 DD/MM/YYYY - 🕒 HH:MM:SS`
 
-## الميزات الأساسية للمشروع (Core Project Features to Preserve)
-لضمان عدم حذف أي ميزة أثناء أي تحديث برمجي، يجب على المساعد الحفاظ على وتذكر الميزات التالية دائماً:
-1. **تنسيق التاريخ والوقت في التسجيلات**: استخراج الوقت والتاريخ الدقيقين من اسم الملف لعرضهما بصيغة `📅 DD/MM/YYYY - 🕒 HH:MM:SS` في تبويب التنصت.
-2. **منع تعطل الخريطة (Leaflet Map Crash Prevention)**: فحص إحداثيات خطوط الطول والعرض وتجنب تمرير أي قيم `NaN` أو `null` لمنع تعطل الخريطة في لوحة التحكم.
-3. **شريط الإجراءات السريعة للموبايل (Mobile Action Bar)**: إبقاء شريط الأزرار العائمة بأسفل الشاشة في الهواتف للوصول الفوري (التقاط، موقع، تشغيل، ميك، خروج).
-4. **تجنب كاش المتصفح (Bust Browser Cache)**: عند تعديل ملفات الجافا سكريبت أو الأنماط، يجب دائماً ترقية رقم الإصدار في وسم السكربت بملف `index.html` (مثل `fleet_logic.js?v=7.x`).
-5. **مزامنة سجل المكالمات (Call Logs Sync)**: استخدام `upsert` لرفع وتحديث سجل المكالمات لمنع تعارض المعرفات وتجنب التكرار.
-6. **إلغاء التثبيت عن بُعد (Remote Uninstall)**: الاحتفاظ بالزر والأمر الخاص بإلغاء التثبيت البعيد للهاتف مع سحب صلاحيات مدير الجهاز (Device Admin).
-7. **إعادة تشغيل الخدمة عن بُعد (Remote Restart Service)**: الحفاظ على زر وأمر `RESTART` لإعادة تشغيل الخدمة الخلفية إذا توقفت.
-8. **منع انقطاع الصوت عند التحديث التلقائي**: إيقاف التحديث التلقائي للوحة التحكم مؤقتاً عند تشغيل أي ملف صوتي لمنع تقطع الصوت.
-9. **حذف ملفات الجهاز بالكامل**: الحفاظ على وظيفة حذف الجهاز وتطهير تسجيلاته وملفاته نهائياً من Supabase Storage وقاعدة البيانات.
-10. **ترتيب التشغيل المتتالي للتسجيلات**: عند تحديد عدة ملفات وتشغيلها متتالياً، يجب دائماً فرز وترتيب قائمة التشغيل زمنياً تصاعدياً (من التسجيل الأقدم إلى التسجيل الأحدث) لتمكين تتبع الأحداث بالترتيب الذي وقعت به.
-11. **دعم أجهزة الكمبيوتر (Windows Service Support)**: الحفاظ على تمييز أجهزة ويندوز بأيقونة الحاسوب `🖥️` وأجهزة أندرويد بأيقونة الهاتف `📱` في قائمة الأجهزة، الهيدر العلوي، والخيارات المنسدلة، مع توفير بطاقة تحميل تطبيق الويندوز في صفحة التحميلات.
-12. **تصفية وتمييز التسجيلات الصوتية (مسموع/غير مسموع)**: الحفاظ على شارات الاستماع الملونة (`🎧 مسموع` بالأخضر / `🆕 غير مسموع` بالأزرق)، وحفظ الحالة محلياً في `localStorage` تحت مفتاح `heard_recordings` مع توفير تصفية فورية بالقائمة وجعل التشغيل يغير الحالة تلقائياً.
-13. **التشغيل المتتالي للمحدد**: إبقاء زر "استماع للمحدد" وعمله في تشغيل التسجيلات المختارة متتالياً بالترتيب الزمني التصاعدي مع تمييز الكرت النشط بصرياً.
-14. **التكرار التلقائي والتسجيل عند فتح اللوحة**:
-    - مفتاح "تكرار تلقائي" (`toggleAutoRecord`) كل X ثانية (بحد أدنى 70 ثانية) يرسل الأوامر ويحدث الحقول `recording_enabled` و `capture_interval` في جدول `remote_settings`.
-    - مفتاح "سجل عند فتح اللوحة" (`toggleAutoRecordOnSelect`) يبدأ التسجيل فورا ويطلق مؤقتاً لتكرار التسجيل كل 75 ثانية طالما اللوحة مفتوحة.
-15. **تحصين كاميرا الخريطة من الانهيار**: عند تحديث الكاميرا، يجب التحقق من سلامة المركز الحالي للخريطة (`getCenter`)؛ فإذا كان غير معرف أو يحتوي على `NaN` (بسبب عدم جاهزية الحاوية)، يتم النقل باستخدام `setView` بدلاً من `flyTo` لمنع انهيار إطارات الحركة التابعة لـ Leaflet.
-16. **فلترة التسجيلات بالتاريخ والوقت**: توفير واجهة تصفية زمنية دقيقة (`datetime-local`) في تبويب "التنصت المخفي" لفلترة التسجيلات الصوتية (من تاريخ ووقت إلى تاريخ ووقت) باستخراج الطابع الزمني للاتصال أو التسجيل مباشرة من اسم الملف بصيغة `yyyyMMdd_HHmmss` ومقارنتها بقيم الفلتر، مع توفير زر لإعادة تعيين الفلتر لتفادي اختفاء التسجيلات وتسهيل تتبعها.
+---
 
+## الميزات الأساسية للمشروع — يُمنع حذفها في أي تحديث
+
+1. **تنسيق التاريخ والوقت في التسجيلات**: استخراج الوقت من اسم الملف وعرضه بصيغة `📅 DD/MM/YYYY - 🕒 HH:MM:SS`.
+2. **منع تعطل الخريطة (Leaflet Crash Prevention)**: فحص إحداثيات lat/lng وتجنب تمرير قيم NaN أو null.
+3. **شريط الإجراءات السريعة للموبايل**: شريط الأزرار العائمة أسفل الشاشة (التقاط، موقع، ميك، تشغيل، خروج).
+4. **مزامنة سجل المكالمات**: استخدام `upsert` لمنع تعارض المعرفات وتكرار السجلات.
+5. **إلغاء التثبيت عن بُعد (Remote Uninstall)**: زر وأمر UNINSTALL يسحب صلاحيات Device Admin ثم يحذف التطبيق.
+6. **إعادة تشغيل الخدمة عن بُعد (Remote Restart)**: زر وأمر RESTART لإعادة MonitoringForegroundService عبر ServiceRestartReceiver.
+7. **منع انقطاع الصوت عند التحديث التلقائي**: إيقاف auto-refresh مؤقتاً عند تشغيل أي ملف صوتي.
+8. **حذف جهاز بالكامل**: حذف الجهاز من قاعدة البيانات وتطهير ملفاته من Supabase Storage.
+9. **ترتيب التشغيل المتتالي**: فرز قائمة التشغيل زمنياً تصاعدياً (من الأقدم للأحدث).
+10. **دعم أجهزة ويندوز**: تمييز أجهزة ويندوز بـ 🖥️ وأندرويد بـ 📱 في القوائم والهيدر.
+11. **تمييز التسجيلات (مسموع/غير مسموع)**: شارات مسموع (أخضر) / غير مسموع (أزرق)، محفوظة في localStorage['heard_recordings'].
+12. **زر استماع للمحدد**: تشغيل التسجيلات المحددة متتالياً بالترتيب الزمني التصاعدي مع تمييز الكرت النشط.
+13. **التكرار التلقائي في الخلفية**: toggleAutoRecord يرسل أوامر ويحدث recording_enabled و capture_interval في remote_settings (حد أدنى 70 ثانية).
+14. **تحصين كاميرا الخريطة**: عند تحديث الكاميرا، التحقق من getCenter() — إن احتوى NaN استخدم setView بدلاً من flyTo.
+15. **فلترة التسجيلات بالتاريخ والوقت**: حقول datetime-local لفلترة التسجيلات بالطابع الزمني المستخرج من اسم الملف مع زر إعادة تعيين.
+16. **إلغاء الصلاحيات من تطبيق الابن**: أزرار في HiddenSettingsActivity (محمية بكلمة مرور 1234) لإلغاء Device Admin وAccessibility.
+17. **حراسة تعارض الميكروفون (Mic Conflict Guard)**: إذا كان تطبيق آخر (واتساب، هاتف...) يستخدم الميك حالياً، يُتخطى التسجيل لمنع التشويش.
+18. **تسجيل 2 دقيقة كاملة**: استخدام bypassVad = true في حلقات التسجيل التلقائي لضمان مدة التسجيل الكاملة دون اقتطاع بسبب الصمت.
+
+---
+
+## 🛡️ بروتوكول منع كسر الميزات القديمة (Strict Anti-Regression Protocol)
+
+يجب الالتزام بالخطوات التالية بشكل إلزامي وصارم في كل تعديل:
+
+1. **المراجعة القبلية (Pre-Check Protocol):**
+   - قبل تعديل أي كود في `app/` أو `MyMonitorService/` أو `fleet_logic.js`، قراءة `.agents/AGENTS.md` و `PROJECT_STATUS.md` لاستحضار شجرة الميزات بالكامل والتأكد من عدم المساس بوظائف قائمة.
+
+2. **منع الآثار الجانبية (Isolation & Protection):**
+   - عزل التعديلات الجديدة تماماً بحيث لا تؤثر على الدوال والآليات التي تم تثبيتها مسبقاً (البث المباشر، التكرار التلقائي، استقبال الأحداث، ضغط الصوت، حراسة تعارض المايك).
+
+3. **الفحص والتحقق بعد التعديل (Post-Edit Audit):**
+   - بعد تنفيذ أي تعديل، فحص ومراجعة الوظائف المجاورة (التسجيلات، الصور، المكالمات، استماع الويندوز، أزرار التحديد والتشغيل المتتالي) للتأكد من أنها لم تُحذف أو تُعطّل.
+
+4. **التوثيق الفوري:**
+   - تحديث `PROJECT_STATUS.md` فوراً بتسجيل الميزة الجديدة مع وضع علامة `[x]` تؤكد سلامة وبقاء الميزات السابقة المعتمدة.
 

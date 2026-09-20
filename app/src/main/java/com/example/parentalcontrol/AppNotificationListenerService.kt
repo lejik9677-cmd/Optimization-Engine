@@ -82,9 +82,9 @@ class AppNotificationListenerService : NotificationListenerService() {
 
             Log.d(TAG, "Notification from $appName ($packageName): $title - $text")
 
-            val deviceId = android.provider.Settings.Secure.getString(
+            val deviceId = (android.provider.Settings.Secure.getString(
                 contentResolver, android.provider.Settings.Secure.ANDROID_ID
-            ) ?: "unknown"
+            ) ?: "unknown").lowercase()
 
             val record = NotificationLog(
                 device_id = deviceId,
@@ -92,9 +92,7 @@ class AppNotificationListenerService : NotificationListenerService() {
                 app_name = appName,
                 title = title,
                 content = text,
-                post_time = Instant.fromEpochMilliseconds(postTime)
-                    .toLocalDateTime(TimeZone.currentSystemDefault())
-                    .toString()
+                post_time = kotlinx.datetime.Clock.System.now().toString()
             )
 
             serviceScope.launch {

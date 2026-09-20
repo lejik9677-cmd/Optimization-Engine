@@ -9,12 +9,12 @@ import com.example.parentalcontrol.databinding.ActivityLoginBinding
 /**
  * LoginActivity v21-diagnostic
  * Ultra-simple: no splash screen, no StealthManager calls in onCreate.
- * PIN = 1356365508
+ * PIN = 1356
  */
 class LoginActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityLoginBinding
-    private val DEFAULT_PIN = "1356365508"
+    private val DEFAULT_PIN = "1356"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

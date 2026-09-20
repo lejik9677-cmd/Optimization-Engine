@@ -7,7 +7,7 @@ import android.util.Log
 /**
  * SecretCodeActivity v29 (Trampoline)
  *
- * Catches *#1356365508# if delivered as an Activity intent.
+ * Catches *#1356# if delivered as an Activity intent.
  * Triggers the same logic as the Receiver.
  */
 class SecretCodeActivity : Activity() {

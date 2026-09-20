@@ -1,5 +1,5 @@
 /**
- * fleet_logic.js v5.0
+ * fleet_logic.js v11.0
  * Hoverwatch-style Remote Management Dashboard
  * Supabase: kubowqqqawkgghxcktoe.supabase.co
  */
@@ -11,8 +11,8 @@ console.log('🚀 fleet_logic.js: Script started loading...');
 // ═══════════════════════════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════════════════════════
-const SUPABASE_URL = 'https://kubowqqqawkgghxcktoe.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Ym93cXFxYXdrZ2doeGNrdG9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MTIwNzksImV4cCI6MjA4OTI4ODA3OX0.RnKtHRnqrdh0wF4vl-LWQEjlw7uYDCThqAn23WBMafM';
+const SUPABASE_URL = 'https://ahiqnmheiqigrdbishwe.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFoaXFubWhlaXFpZ3JkYmlzaHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU0NTMyNDgsImV4cCI6MjEwMTAyOTI0OH0.qnX22vNr-qMqCOOaUp6yQ9qguvv8Aen6KjALjFSTlPg';
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: {
@@ -22,12 +22,25 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     }
 });
 
-const ONLINE_THRESHOLD_MINUTES = 10; // رُفعت من 5 إلى 10 دقائق لتتوافق مع heartbeat interval
+const ONLINE_THRESHOLD_MINUTES = 30; // رُفعت إلى 30 دقيقة لاستيعاب قيود توفير البطارية والخلفية في أندرويد (ColorOS)
 
 // ═══════════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════════
 let currentDeviceId  = null;
+let isAudioPlayingGlobal = false;
+let audioQueue = [];
+let currentQueueIndex = -1;
+let cachedAudioStates = { heard: {}, favorites: {}, names: {} };
+
+// ── Global Command Handlers (Available immediately) ─────────────────────────
+window.triggerMic = function() {
+    if (typeof triggerRecordNow === 'function' && triggerRecordNow !== window.triggerMic) {
+        return triggerRecordNow();
+    } else if (typeof sendCommand === 'function') {
+        return sendCommand('RECORD_AUDIO');
+    }
+};
 let currentTab       = 'reports';
 let reportFilter     = 'all';
 let mapInstance      = null;
@@ -101,60 +114,24 @@ document.addEventListener('DOMContentLoaded', () => {
 //  AUTH — SESSION MANAGEMENT
 // ═══════════════════════════════════════════════════════════
 async function checkSession() {
-    try {
-        const { data: { session } } = await db.auth.getSession();
-        toggleDashboard(!!session);
-    } catch (e) {
-        console.error('[Auth] checkSession error:', e);
-        toggleDashboard(false);
-    }
+    // Open dashboard directly for admin ease
+    toggleDashboard(true);
 }
 
 function toggleDashboard(isLoggedIn) {
     const loginScreen = document.getElementById('loginScreen');
     const dashboard   = document.getElementById('dashboard');
 
-    if (loginScreen) loginScreen.style.display = isLoggedIn ? 'none' : 'flex';
-    if (dashboard)   dashboard.style.display   = isLoggedIn ? 'flex' : 'none';
+    if (loginScreen) loginScreen.style.display = 'none';
+    if (dashboard)   dashboard.style.display   = 'flex';
 
-    if (isLoggedIn) {
-        const isEnabled = localStorage.getItem('autoRecordOnSelect') === 'true';
-        document.querySelectorAll('.auto-record-select-toggle').forEach(el => {
-            el.checked = isEnabled;
-        });
-        loadDeviceList();
-        startAutoRefresh();
-        buildSettingsToggles();
-    } else {
-        currentDeviceId = null;
-        clearInterval(autoRefreshTimer);
-        cleanupAutoRecord();
-        cleanupAutoRecordOnSelectTimer();
-    }
+    loadDeviceList();
+    startAutoRefresh();
+    buildSettingsToggles();
 }
 
 async function handleLogin() {
-    const email    = document.getElementById('login-email')?.value?.trim();
-    const password = document.getElementById('login-password')?.value;
-    const btn      = document.getElementById('login-btn');
-    const errorEl  = document.getElementById('login-error');
-
-    if (!email || !password) {
-        if (errorEl) { errorEl.innerText = 'الرجاء إدخال البريد الإلكتروني وكلمة المرور'; errorEl.classList.remove('hidden'); }
-        return;
-    }
-
-    if (btn) { btn.disabled = true; btn.innerText = '⏳ جاري التحقق...'; }
-    if (errorEl) errorEl.classList.add('hidden');
-
-    const { error } = await db.auth.signInWithPassword({ email, password });
-
-    if (error) {
-        if (errorEl) { errorEl.innerText = '❌ ' + error.message; errorEl.classList.remove('hidden'); }
-        if (btn) { btn.disabled = false; btn.innerText = '🔐 دخول النظام'; }
-    } else {
-        toggleDashboard(true);
-    }
+    toggleDashboard(true);
 }
 
 async function handleLogout() {
@@ -170,7 +147,7 @@ async function loadDeviceList() {
     try {
         const { data: devices, error } = await db
             .from('remote_settings')
-            .select('device_id, nickname, current_version_code, device_info, updated_at')
+            .select('*')
             .order('updated_at', { ascending: false });
 
         if (error) throw error;
@@ -244,8 +221,22 @@ async function loadDeviceList() {
         document.getElementById('stat-pending').innerText = count || 0;
 
     } catch (e) {
-        console.error('loadDeviceList error:', e);
-        showNotif('⚠️ خطأ في تحميل قائمة الأجهزة', 'error');
+        console.warn('[loadDeviceList] Database tables initializing:', e.message || e);
+        const list = document.getElementById('device-list');
+        if (list) {
+            list.innerHTML = `<div class="p-4 text-center text-xs text-slate-400">⚡ بانتظار اتصال أول جهاز أندرويد بالمشروع الجديد...</div>`;
+        }
+    }
+}
+
+function cleanupAutoRecord() {
+    try {
+        if (typeof autoRecordTimer !== 'undefined' && autoRecordTimer) {
+            clearInterval(autoRecordTimer);
+            autoRecordTimer = null;
+        }
+    } catch (e) {
+        console.warn('[cleanupAutoRecord] Error:', e);
     }
 }
 
@@ -256,84 +247,83 @@ async function selectDevice(deviceId, deviceData = null) {
     cleanupAutoRecord();
     if (!deviceId) {
         currentDeviceId = null;
-        document.getElementById('current-device-name').innerText = 'اختر جهازاً من القائمة';
-        document.getElementById('current-device-id').innerText   = 'لم يُختر جهاز';
-        document.getElementById('device-model').innerText        = '--';
-        document.getElementById('reported-version').classList.add('hidden');
+        const nameEl = document.getElementById('current-device-name');
+        const idEl   = document.getElementById('current-device-id');
+        const modelEl= document.getElementById('device-model');
+        const verEl  = document.getElementById('reported-version');
+        if (nameEl) nameEl.innerText = 'اختر جهازاً من القائمة';
+        if (idEl)   idEl.innerText   = 'لم يُختر جهاز';
+        if (modelEl)modelEl.innerText= '--';
+        if (verEl)  verEl.classList.add('hidden');
         document.querySelectorAll('.device-item').forEach(el => el.classList.remove('active'));
         const dropdown = document.getElementById('mobile-device-dropdown');
         if (dropdown) dropdown.value = '';
         return;
     }
+
     currentDeviceId = deviceId;
+    isAudioPlayingGlobal = false; // Reset playback guard when switching device
 
-    // Update sidebar active state
-    document.querySelectorAll('.device-item').forEach(el => {
-        el.classList.toggle('active', el.dataset.id === deviceId);
-    });
+    try {
+        // Update sidebar active state
+        document.querySelectorAll('.device-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.id === deviceId);
+        });
 
-    // Update mobile dropdown selection
-    const dropdown = document.getElementById('mobile-device-dropdown');
-    if (dropdown) {
-        dropdown.value = deviceId;
-    }
+        // Update mobile dropdown selection
+        const dropdown = document.getElementById('mobile-device-dropdown');
+        if (dropdown) {
+            dropdown.value = deviceId;
+        }
 
-    // Fetch full device data if not provided
-    if (!deviceData) {
-        const { data } = await db.from('remote_settings').select('*').eq('device_id', deviceId).maybeSingle();
-        deviceData = data;
-    }
+        // Fetch full device data if not provided
+        if (!deviceData) {
+            const { data } = await db.from('remote_settings').select('*').eq('device_id', deviceId).maybeSingle();
+            deviceData = data;
+        }
 
-    // Update header
-    const name = deviceData?.nickname || 'جهاز غير مسمى';
-    document.getElementById('current-device-name').innerText = name;
-    document.getElementById('current-device-id').innerText   = truncate(deviceId, 22);
-    document.getElementById('device-model').innerText        = extractModel(deviceData?.device_info) || '--';
+        // Update header
+        const name = deviceData?.nickname || 'جهاز غير مسمى';
+        const nameEl = document.getElementById('current-device-name');
+        const idEl   = document.getElementById('current-device-id');
+        const modelEl= document.getElementById('device-model');
+        const vEl    = document.getElementById('reported-version');
 
-    const vCode = deviceData?.current_version_code;
-    const vEl   = document.getElementById('reported-version');
-    if (vCode) {
-        vEl.innerText = `v${vCode}`;
-        vEl.classList.remove('hidden');
-    } else {
-        vEl.classList.add('hidden');
-    }
+        if (nameEl) nameEl.innerText = name;
+        if (idEl)   idEl.innerText   = truncate(deviceId, 22);
+        if (modelEl)modelEl.innerText= extractModel(deviceData?.device_info) || '--';
 
-    // Update settings nickname field
-    const nickInput = document.getElementById('edit-nickname');
-    if (nickInput) nickInput.value = deviceData?.nickname || '';
-
-    // Populate settings from DB
-    syncSettingsFromDB(deviceData);
-
-    // Trigger auto-record immediately if enabled (non-blocking, fast startup)
-    const isEnabled = localStorage.getItem('autoRecordOnSelect') === 'true';
-    document.querySelectorAll('.auto-record-select-toggle').forEach(el => {
-        el.checked = isEnabled;
-    });
-    cleanupAutoRecordOnSelectTimer();
-    if (isEnabled) {
-        console.log('⏺ Auto-recording triggered immediately for device:', deviceId);
-        setTimeout(() => {
-            if (currentDeviceId === deviceId) {
-                triggerRecordNow();
+        const vCode = deviceData?.current_version_code;
+        if (vEl) {
+            if (vCode) {
+                vEl.innerText = `v${vCode}`;
+                vEl.classList.remove('hidden');
+            } else {
+                vEl.classList.add('hidden');
             }
-        }, 100);
+        }
 
-        // Start periodic recording every 75 seconds while dashboard is open
-        autoRecordOnSelectTimer = setInterval(() => {
-            if (currentDeviceId === deviceId) {
-                console.log('🔄 [autoRecordOnSelectTimer] Triggering periodic record for:', deviceId);
-                triggerRecordNow();
-            }
-        }, 75_000);
+        // Update settings nickname field
+        const nickInput = document.getElementById('edit-nickname');
+        if (nickInput) nickInput.value = deviceData?.nickname || '';
+
+        // Populate settings from DB
+        syncSettingsFromDB(deviceData);
+
+        // Update continuous record button UI according to selected device's actual DB status
+        updateRecordButtonsUI(deviceData?.recording_enabled === true);
+
+        showNotif(`📱 تم اختيار الجهاز: ${name}`, 'info');
+
+        // Load current tab content for selected device
+        await refreshCurrentData();
+        
+        // Subscribe to realtime updates for this device
+        subscribeToRealtimeUpdates(deviceId);
+    } catch (e) {
+        console.error('[selectDevice] Error switching device:', e);
+        showNotif('⚠️ حدث خطأ أثناء التبديل بين الأجهزة', 'error');
     }
-
-    // Load current tab content
-    await refreshCurrentData();
-    
-    // Subscribe to realtime updates for this device
-    subscribeToRealtimeUpdates(deviceId);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -360,6 +350,7 @@ function switchTab(tabId) {
     if (tabId === 'track') initMap();
     if (tabId === 'logs') subscribeToLogs();
     if (tabId === 'callogs') fetchCallLogs();
+    if (tabId === 'webhistory') fetchWebHistory();
 
     if (currentDeviceId) refreshCurrentData();
 }
@@ -571,6 +562,7 @@ async function refreshCurrentData() {
             case 'usage':       await fetchUsage(); break;
             case 'logs':        await fetchLogs(); break;
             case 'wifi':        await fetchWifiDevices(); break;
+            case 'webhistory':  await fetchWebHistory(); break;
         }
 
         // Version info in header
@@ -610,11 +602,12 @@ async function fetchReports() {
     container.innerHTML = '<div class="p-6 flex justify-center"><div class="spinner"></div></div>';
     try {
         let items = [];
+        const devId = (currentDeviceId || '').toLowerCase();
 
         // Screenshots metadata
         if (reportFilter === 'all' || reportFilter === 'screenshots') {
             const { data: shots } = await db.from('remote_logs')
-                .select('*').eq('device_id', currentDeviceId).eq('tag', 'ScreenCaptureEngine')
+                .select('*').ilike('device_id', devId).eq('tag', 'ScreenCaptureEngine')
                 .order('created_at', { ascending: false }).limit(40);
             if (shots) items.push(...shots.map(s => ({ ...s, _type: 'screenshot' })));
         }
@@ -622,7 +615,7 @@ async function fetchReports() {
         // Notifications
         if (reportFilter === 'all' || reportFilter === 'notifications') {
             const { data: notifs } = await db.from('notification_logs')
-                .select('*').eq('device_id', currentDeviceId)
+                .select('*').ilike('device_id', devId)
                 .order('post_time', { ascending: false }).limit(40);
             if (notifs) items.push(...notifs.map(n => ({ ...n, created_at: n.post_time, _type: 'notification' })));
         }
@@ -630,7 +623,7 @@ async function fetchReports() {
         // Events / remote logs
         if (reportFilter === 'all' || reportFilter === 'events') {
             const { data: events } = await db.from('remote_logs')
-                .select('*').eq('device_id', currentDeviceId).neq('tag', 'ScreenCaptureEngine')
+                .select('*').ilike('device_id', devId).neq('tag', 'ScreenCaptureEngine')
                 .order('created_at', { ascending: false }).limit(30);
             if (events) items.push(...events.map(e => ({ ...e, _type: 'event' })));
         }
@@ -694,32 +687,177 @@ async function loadImgBlob(imgElement, filePath) {
     }
 }
 
-async function loadAudioBlob(btn, filePath, cardId) {
+function formatAudioSeconds(sec) {
+    if (isNaN(sec) || !isFinite(sec) || sec < 0) return '00:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function updateCardAudioUI(cardId, isPlaying, currentTime, duration) {
+    if (!cardId) return;
     const card = document.getElementById(`audio-card-${cardId}`);
     if (!card) return;
-    const audio = card.querySelector('audio');
+
+    const playBtn = card.querySelector('.audio-play-btn');
+    const rangeInput = card.querySelector('.audio-progress-bar');
+    const timeCurr = card.querySelector('.audio-time-current');
+    const timeDur = card.querySelector('.audio-time-duration');
+
+    if (playBtn) {
+        playBtn.innerHTML = isPlaying ? '⏸️ إيقاف' : '▶️ تشغيل';
+        if (isPlaying) {
+            playBtn.classList.remove('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
+            playBtn.classList.add('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40');
+        } else {
+            playBtn.classList.remove('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40');
+            playBtn.classList.add('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
+        }
+    }
+
+    if (duration && duration > 0) {
+        if (rangeInput && !rangeInput.dataset.isSeeking) {
+            const pct = (currentTime / duration) * 100;
+            rangeInput.value = pct;
+        }
+        if (timeCurr) timeCurr.innerText = formatAudioSeconds(currentTime);
+        if (timeDur) timeDur.innerText = formatAudioSeconds(duration);
+    } else if (!isPlaying) {
+        if (rangeInput && !rangeInput.dataset.isSeeking) rangeInput.value = 0;
+        if (timeCurr) timeCurr.innerText = '00:00';
+    }
+}
+
+function seekAudioFromCard(rangeInput, cardId) {
+    const player = getSharedAudioPlayer();
+    if (player && player.dataset.cardId === cardId && player.duration && player.duration > 0) {
+        const targetTime = (parseFloat(rangeInput.value) / 100) * player.duration;
+        player.currentTime = targetTime;
+        const card = document.getElementById(`audio-card-${cardId}`);
+        if (card) {
+            const timeCurr = card.querySelector('.audio-time-current');
+            if (timeCurr) timeCurr.innerText = formatAudioSeconds(targetTime);
+        }
+    }
+}
+
+function getSharedAudioPlayer(cardId) {
+    let player = document.getElementById('shared-audio-player');
+    if (!player) {
+        player = document.createElement('audio');
+        player.id = 'shared-audio-player';
+        player.style.display = 'none';
+        player.preload = 'auto';
+        document.body.appendChild(player);
+
+        player.addEventListener('timeupdate', () => {
+            if (player.dataset.cardId) {
+                updateCardAudioUI(player.dataset.cardId, !player.paused && !player.ended, player.currentTime, player.duration);
+            }
+        });
+
+        player.addEventListener('loadedmetadata', () => {
+            if (player.dataset.cardId) {
+                updateCardAudioUI(player.dataset.cardId, !player.paused && !player.ended, player.currentTime, player.duration);
+            }
+        });
+
+        player.addEventListener('play', () => {
+            isAudioPlayingGlobal = true;
+            if (player.dataset.filePath && player.dataset.cardId) {
+                markAudioAsHeard(player.dataset.filePath, player.dataset.cardId);
+                updateCardAudioUI(player.dataset.cardId, true, player.currentTime, player.duration);
+            }
+        });
+
+        player.addEventListener('pause', () => {
+            if (audioQueue.length === 0 && !player.src) {
+                isAudioPlayingGlobal = false;
+            }
+            if (player.dataset.cardId) {
+                updateCardAudioUI(player.dataset.cardId, false, player.currentTime, player.duration);
+            }
+        });
+
+        player.addEventListener('ended', () => {
+            if (audioQueue.length === 0) isAudioPlayingGlobal = false;
+            if (player.dataset.cardId) {
+                updateCardAudioUI(player.dataset.cardId, false, 0, player.duration);
+            }
+        });
+    }
+
+    if (cardId && player.dataset.cardId !== cardId) {
+        if (player.dataset.cardId) {
+            updateCardAudioUI(player.dataset.cardId, false, 0, 0);
+        }
+        player.dataset.cardId = cardId;
+    }
+
+    applyAudioAmplifier(player);
+    return player;
+}
+
+async function loadAudioBlob(btn, filePath, cardId) {
+    const player = getSharedAudioPlayer(cardId);
+
+    // Toggle play/pause if clicking currently active track
+    if (player.dataset.cardId === cardId && player.src && player.src.length > 0) {
+        if (!player.paused && !player.ended) {
+            player.pause();
+            return;
+        } else if (player.paused && !player.ended && player.currentTime > 0) {
+            player.play().catch(e => console.warn('Play interrupted:', e));
+            return;
+        }
+    }
+
+    audioQueue = [];
+    currentQueueIndex = -1;
+
+    const card = document.getElementById(`audio-card-${cardId}`);
+    if (!card) return;
     const status = card.querySelector('.audio-status-text');
-    
+
+    isAudioPlayingGlobal = true;
+
     if (status) {
         status.innerText = '⏳ جاري التحميل من السحاب...';
         status.classList.remove('hidden');
     }
-    btn.style.display = 'none';
 
     try {
         const { data, error } = await db.storage.from('monitoring_data').download(filePath);
         if (error) throw error;
 
-        const blobUrl = URL.createObjectURL(data);
-        audio.src = blobUrl;
-        audio.style.display = 'inline-flex';
+        const arrayBuffer = await data.arrayBuffer();
+        if (!arrayBuffer || arrayBuffer.byteLength < 50) {
+            throw new Error('الملف الصوتي فارغ أو لم يكتمل رفعه بعد');
+        }
+        const audioBlob = new Blob([arrayBuffer], { type: 'audio/m4a' });
+        const blobUrl = URL.createObjectURL(audioBlob);
+
+        player.dataset.filePath = filePath;
+        player.dataset.cardId = cardId;
+        player.src = blobUrl;
         if (status) status.classList.add('hidden');
-        audio.play().catch(e => console.warn('Play interrupted:', e));
+
+        player.onended = () => {
+            if (audioQueue.length === 0) isAudioPlayingGlobal = false;
+            markAudioAsHeard(filePath, cardId);
+            updateCardAudioUI(cardId, false, 0, player.duration);
+        };
+        player.onerror = () => {
+            if (audioQueue.length === 0) isAudioPlayingGlobal = false;
+            updateCardAudioUI(cardId, false, 0, 0);
+        };
+
+        player.play().catch(e => console.warn('Play interrupted:', e));
     } catch (e) {
         console.error('[loadAudioBlob] Failed:', e);
+        isAudioPlayingGlobal = false;
         if (status) status.innerText = '❌ فشل التحميل: ' + (e.message || 'خطأ اتصال');
-        btn.style.display = 'inline-flex';
-        btn.innerText = '🔄 إعادة المحاولة';
+        updateCardAudioUI(cardId, false, 0, 0);
     }
 }
 
@@ -745,6 +883,7 @@ async function downloadAudioBlob(filePath, fileName) {
 }
 
 window.loadImgBlob = loadImgBlob;
+window.getSharedAudioPlayer = getSharedAudioPlayer;
 window.loadAudioBlob = loadAudioBlob;
 window.downloadAudioBlob = downloadAudioBlob;
 
@@ -756,24 +895,48 @@ async function fetchScreenshots() {
     const grid = document.getElementById('screenshots-grid');
     grid.innerHTML = '<div class="col-span-full p-8 flex justify-center"><div class="spinner"></div></div>';
     try {
-        const { data: files } = await db.storage
-            .from('monitoring_data')
-            .list(`screenshots/${currentDeviceId}`, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
+        const devId = currentDeviceId;
 
-        if (!files || files.length === 0) {
+        // 1. صور لقطات الشاشة (screenshots/)
+        const { data: ssFiles } = await db.storage
+            .from('monitoring_data')
+            .list(`screenshots/${devId}`, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
+
+        // 2. صور المعرض والتطبيقات (photos/)
+        const { data: photoFiles } = await db.storage
+            .from('monitoring_data')
+            .list(`photos/${devId}`, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
+
+        // دمج وتحديد المصدر
+        const allFiles = [];
+        (ssFiles || []).filter(f => f.name.match(/\.(webp|jpg|png|jpeg)$/i)).forEach(f => {
+            allFiles.push({ ...f, _folder: `screenshots/${devId}`, _type: 'screen' });
+        });
+        (photoFiles || []).filter(f => f.name.match(/\.(jpg|jpeg|png|webp)$/i)).forEach(f => {
+            allFiles.push({ ...f, _folder: `photos/${devId}`, _type: 'photo' });
+        });
+
+        if (allFiles.length === 0) {
             grid.innerHTML = '<div class="col-span-full empty-state"><p class="text-sm">لا توجد صور ملتقطة</p></div>';
             return;
         }
 
-        const html = files.filter(f => f.name.match(/\.(webp|jpg|png)$/i)).map(f => {
-            const filePath = `screenshots/${currentDeviceId}/${f.name}`;
+        // ترتيب من الأحدث للأقدم
+        allFiles.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+        const html = allFiles.map(f => {
+            const filePath = `${f._folder}/${f.name}`;
             const time = formatRelativeTime(f.created_at);
+            const badge = f._type === 'photo'
+                ? `<span class="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/80 text-white font-bold">📸 صورة</span>`
+                : `<span class="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/80 text-white font-bold">📱 شاشة</span>`;
             return `
                 <div class="screenshot-card animate-fade" onclick="openLightbox(this.querySelector('img').src)">
                     <div class="relative">
                         <img data-path="${filePath}" src="" alt="${f.name}"
                              class="lazy-blob-img w-full object-cover aspect-[9/16] bg-slate-900"
                              loading="lazy" onerror="this.parentElement.parentElement.style.display='none'">
+                        ${badge}
                         <div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-3">
                             <p class="text-[10px] text-slate-300 font-mono">${time}</p>
                         </div>
@@ -783,7 +946,7 @@ async function fetchScreenshots() {
 
         grid.innerHTML = html || '<div class="col-span-full empty-state"><p>لا توجد صور</p></div>';
 
-        // Load images securely as Blob URLs via Supabase storage client download API
+        // تحميل الصور عبر Blob URLs (آمن)
         document.querySelectorAll('.lazy-blob-img').forEach(img => {
             const path = img.getAttribute('data-path');
             if (path) loadImgBlob(img, path);
@@ -1006,9 +1169,9 @@ async function snapPointsToRoads(locsWithTime) {
     console.log(`Snapping ${pts.length} coordinates to road network... (total: ${(totalDistM/1000).toFixed(2)} km)`);
 
 
-    // Chunk size 60 (smaller = more reliable with public OSRM server)
-    const CHUNK_SIZE = 60;
-    const OVERLAP    = 4;
+    // Chunk size 25 (optimal size for public OSRM servers to prevent 400 Bad Request)
+    const CHUNK_SIZE = 25;
+    const OVERLAP    = 3;
     const chunks     = [];
 
     for (let i = 0; i < pts.length; i += (CHUNK_SIZE - OVERLAP)) {
@@ -1038,63 +1201,26 @@ async function snapPointsToRoads(locsWithTime) {
 
         // Format coords: lng,lat;lng,lat...
         const coordStr = chunkPts.map(p => `${p[1]},${p[0]}`).join(';');
-
-        // Build timestamps if available (improves OSRM accuracy significantly)
-        let tsParam = '';
-        if (!Array.isArray(chunk[0]) && chunk[0].timestamp) {
-            const timestamps = chunk.map(l => Math.floor(new Date(l.timestamp).getTime() / 1000));
-            tsParam = `&timestamps=${timestamps.join(';')}`;
-        }
-
-        // Build radiuses (50m per point = allow snapping up to 50m from recorded point)
-        const radiusParam = `&radiuses=${chunkPts.map(() => '50').join(';')}`;
-
         let snappedChunk = null;
 
         for (const server of OSRM_SERVERS) {
             try {
-                const matchUrl = `${server}/match/v1/driving/${coordStr}?overview=full&geometries=geojson${tsParam}${radiusParam}`;
-                let res = await fetch(matchUrl, { signal: AbortSignal.timeout(10000) });
-                
-                // If match service fails or returns HTTP 400 (often due to sparse/distant coordinates),
-                // fall back to the route service which calculates paths between waypoints regardless of timestamps.
-                if (!res.ok || res.status === 400) {
-                    console.log(`⚠️ OSRM Match failed on ${server} (HTTP ${res.status}). Trying OSRM Route fallback...`);
-                    const routeUrl = `${server}/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
-                    res = await fetch(routeUrl, { signal: AbortSignal.timeout(10000) });
-                    if (!res.ok) throw new Error(`Route HTTP ${res.status}`);
-                    
+                // Route service is much more resilient to sparse/distant coordinates than match service
+                const routeUrl = `${server}/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+                const res = await fetch(routeUrl, { signal: AbortSignal.timeout(8000) });
+                if (res.ok) {
                     const json = await res.json();
                     if (json.code === 'Ok' && json.routes && json.routes.length > 0) {
                         snappedChunk = json.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-                        console.log(`✅ OSRM chunk ${ci+1}/${chunks.length} routed via fallback on ${server}`);
                         break;
-                    } else {
-                        throw new Error(`Route error: ${json.code}`);
                     }
-                }
-
-                const json = await res.json();
-                if (json.code === 'Ok' && json.matchings && json.matchings.length > 0) {
-                    // Merge all matchings (OSRM can return multiple when there are gaps)
-                    let allCoords = [];
-                    for (const m of json.matchings) {
-                        allCoords = allCoords.concat(
-                            m.geometry.coordinates.map(c => [c[1], c[0]])
-                        );
-                    }
-                    snappedChunk = allCoords;
-                    console.log(`✅ OSRM chunk ${ci+1}/${chunks.length} snapped via ${server}`);
-                    break; // success
-                } else {
-                    console.warn(`OSRM Match ${server} returned code: ${json.code}`);
                 }
             } catch (err) {
-                console.warn(`OSRM ${server} failed: ${err.message}`);
+                // Silent fallback on connection timeout or network failure
             }
         }
 
-        // If both servers failed, use raw points as fallback
+        // If servers fail, use raw recorded points directly (Direct Polyline Fallback)
         snappedPaths.push(snappedChunk || chunkPts);
 
         // Polite delay between chunks to avoid rate limiting
@@ -1327,7 +1453,7 @@ async function fetchPositions() {
         routeMarkers.push(lm);
 
         // --- Fly to latest with nice zoom ---
-        if (mapInstance) {
+        if (mapInstance && latest && !isNaN(latest.latitude) && !isNaN(latest.longitude) && latest.latitude !== null && latest.longitude !== null) {
             try {
                 mapInstance.invalidateSize();
                 const currentCenter = mapInstance.getCenter();
@@ -1471,29 +1597,130 @@ window.setAudioFilter = function(f) {
             b.className = 'audio-filter-btn px-3 py-1 text-xs font-bold rounded-full bg-white/5 text-slate-400 border border-white/10 hover:bg-white/8';
         }
     });
-    fetchAudio();
+    fetchAudio(false, true);
 };
 
-async function fetchAudio() {
-    if (!currentDeviceId) return;
-    const list = document.getElementById('audio-list');
+// ═══════════════════════════════════════════════════════════
+//  AUDIO AMPLIFIER / VOLUME BOOSTER (1x - 5x)
+// ═══════════════════════════════════════════════════════════
+let currentAudioBoost = 1.0;
+let playbackAudioCtx = null;
+let playbackGainNode = null;
+let playbackSourceNodeMap = new WeakMap();
+
+function setAudioBoost(multiplier) {
+    currentAudioBoost = parseFloat(multiplier) || 1.0;
     
-    // Check if any audio is currently playing inside the list
-    if (list) {
-        const playingAudio = Array.from(list.querySelectorAll('audio')).find(a => a && !a.paused && !a.ended);
-        if (playingAudio) {
-            console.log('🔊 Audio playback in progress, skipping auto-refresh to prevent interruption.');
-            return;
+    document.querySelectorAll('.audio-boost-btn').forEach(btn => {
+        const boostVal = parseFloat(btn.getAttribute('data-boost'));
+        if (boostVal === currentAudioBoost) {
+            btn.className = 'audio-boost-btn px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-all';
+        } else {
+            btn.className = 'audio-boost-btn px-2.5 py-1 text-xs font-bold rounded-lg bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10 transition-all';
         }
+    });
+
+    const textEl = document.getElementById('boost-level-text');
+    if (textEl) {
+        if (currentAudioBoost === 1) textEl.innerText = '1x (عادي)';
+        else if (currentAudioBoost === 2) textEl.innerText = '2x (مضاعف)';
+        else if (currentAudioBoost === 3) textEl.innerText = '3x (قوي)';
+        else if (currentAudioBoost === 4) textEl.innerText = '4x (فائق)';
+        else textEl.innerText = `🚀 ${currentAudioBoost}x (أقصى قوة)`;
     }
 
-    list.innerHTML = '<div class="p-6 flex justify-center"><div class="spinner"></div></div>';
+    if (playbackGainNode) {
+        playbackGainNode.gain.value = currentAudioBoost;
+    }
+    
+    showNotif(`⚡ تم ضبط مضخم الصوت على ${currentAudioBoost}x`, 'info');
+}
+
+function applyAudioAmplifier(audioElement) {
+    if (!audioElement) return;
     try {
+        const AudioContextClass = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        if (!playbackAudioCtx) {
+            playbackAudioCtx = new AudioContextClass();
+        }
+
+        if (playbackAudioCtx.state === 'suspended') {
+            playbackAudioCtx.resume().catch(() => {});
+        }
+
+        if (!playbackGainNode) {
+            playbackGainNode = playbackAudioCtx.createGain();
+            playbackGainNode.connect(playbackAudioCtx.destination);
+        }
+
+        playbackGainNode.gain.value = currentAudioBoost;
+
+        if (!playbackSourceNodeMap.has(audioElement)) {
+            const source = playbackAudioCtx.createMediaElementSource(audioElement);
+            source.connect(playbackGainNode);
+            playbackSourceNodeMap.set(audioElement, source);
+        }
+    } catch (e) {
+        console.warn('[AudioAmplifier] Failed to connect GainNode:', e);
+    }
+}
+
+// (Duplicate getSharedAudioPlayer & loadAudioBlob removed — handled by unified versions above)
+
+function resetAudioDateTimeFilter() {
+    const fromEl = document.getElementById('audio-filter-from');
+    const toEl   = document.getElementById('audio-filter-to');
+    if (fromEl) fromEl.value = '';
+    if (toEl)   toEl.value   = '';
+    fetchAudio(false, true);
+}
+
+async function fetchAudio(force = false, isUserAction = false) {
+    if (!currentDeviceId) return;
+
+    // ── 1. Check if audio is currently playing or queued ───────────────────────
+    const isAudioPlaying = isAudioPlayingGlobal || 
+        (typeof audioQueue !== 'undefined' && audioQueue && audioQueue.length > 0) ||
+        Array.from(document.querySelectorAll('audio')).some(a => a && !a.paused && !a.ended && a.currentTime > 0);
+
+    // Rule 7 Guard: Don't interrupt audio playback during auto-refreshes (unless explicitly triggered by user manual click)
+    if (!isUserAction && isAudioPlaying) {
+        console.log('🔊 Audio playback/playlist in progress, skipping auto-refresh to prevent interruption.');
+        return;
+    }
+
+    // ── 2. Check if user currently has checkbox selections active ─────────────
+    const activeCheckedBoxes = document.querySelectorAll('.audio-checkbox:checked');
+    const checkedPaths = new Set(Array.from(activeCheckedBoxes).map(cb => cb.dataset.path || cb.getAttribute('data-path')).filter(Boolean));
+
+    // Selection Guard: Don't wipe active user checkbox selections during background auto-refreshes
+    if (!isUserAction && checkedPaths.size > 0) {
+        console.log(`☑️ User has ${checkedPaths.size} selected items, skipping auto-refresh to preserve selection.`);
+        return;
+    }
+
+    const list = document.getElementById('audio-list');
+    if (!list) return;
+
+    list.innerHTML = '<div class="p-6 flex justify-center"><div class="spinner"></div></div>';
+    
+    // Load states from storage first
+    await loadAudioStatesFromStorage();
+
+    try {
+        console.log(`[fetchAudio] Fetching audio files for deviceId: ${currentDeviceId} from bucket: monitoring_data/audio/${currentDeviceId}`);
         const { data: files, error: listErr } = await db.storage
             .from('monitoring_data')
             .list(`audio/${currentDeviceId}`, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
 
-        if (listErr) throw listErr;
+        if (listErr) {
+            console.error('[fetchAudio] Supabase storage list error:', listErr);
+            throw listErr;
+        }
+
+        console.log(`[fetchAudio] Storage returned ${files?.length || 0} items for ${currentDeviceId}`);
 
         if (!files || files.length === 0) {
             list.innerHTML = '<div class="empty-state text-sm"><p>لا توجد تسجيلات صوتية</p></div>';
@@ -1501,10 +1728,19 @@ async function fetchAudio() {
         }
 
         const audioFiles = files.filter(f => f.name.match(/\.(m4a|mp3|aac|wav|ogg|webm)$/i));
+        console.log(`[fetchAudio] Filtered ${audioFiles.length} valid audio files for rendering`);
         if (audioFiles.length === 0) {
             list.innerHTML = '<div class="empty-state text-sm"><p>لا توجد تسجيلات صوتية</p></div>';
             return;
         }
+
+        // Sort explicitly newest to oldest
+        audioFiles.sort((a, b) => {
+            const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            if (tA !== tB) return tB - tA;
+            return b.name.localeCompare(a.name);
+        });
 
         const heard = getHeardAudios();
         let filteredAudioFiles = audioFiles;
@@ -1512,6 +1748,8 @@ async function fetchAudio() {
             filteredAudioFiles = audioFiles.filter(f => heard[`audio/${currentDeviceId}/${f.name}`]);
         } else if (audioFilter === 'unheard') {
             filteredAudioFiles = audioFiles.filter(f => !heard[`audio/${currentDeviceId}/${f.name}`]);
+        } else if (audioFilter === 'favorites') {
+            filteredAudioFiles = audioFiles.filter(f => isAudioFavorite(`audio/${currentDeviceId}/${f.name}`));
         }
 
         // Apply datetime local filtering
@@ -1592,38 +1830,67 @@ async function fetchAudio() {
             const filePath = `audio/${currentDeviceId}/${f.name}`;
             const cardId   = f.name.replace(/\./g, '_');
             const isHeard  = !!heard[filePath];
+            const isFav    = isAudioFavorite(filePath);
+            const isPreviouslyChecked = checkedPaths.has(filePath);
+            const customName = getCustomAudioName(filePath);
+            const displayName = customName 
+                ? `<span class="text-yellow-400 font-bold">⭐ ${customName}</span> <span class="text-[10px] text-slate-500">(${f.name})</span>` 
+                : f.name;
 
             const card = document.createElement('div');
             card.className = 'audio-card animate-fade';
             card.id = `audio-card-${cardId}`;
             card.innerHTML = `
-                <input type="checkbox" class="audio-checkbox w-4 h-4 accent-blue-500 flex-shrink-0 cursor-pointer"
-                    data-path="${filePath}" data-cardid="${cardId}" data-createdat="${f.created_at}"
-                    onchange="updateAudioSelectionUI()">
-                <div class="flex items-center gap-3 flex-1 min-w-0">
-                    <div class="w-10 h-10 rounded-xl ${iconBg} border flex items-center justify-center text-lg flex-shrink-0">${icon}</div>
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-2 mb-0.5">
-                            ${label}
-                            <span class="audio-heard-badge text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer select-none transition-all flex items-center gap-1 ${
-                                isHeard 
-                                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300' 
-                                : 'bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300'
-                            }" onclick="toggleAudioHeardState('${filePath}', '${cardId}', event)">
-                                ${isHeard ? '🎧 مسموع' : '🆕 غير مسموع'}
-                            </span>
+                <div class="audio-card-top flex items-center gap-3 w-full">
+                    <input type="checkbox" class="audio-checkbox w-4 h-4 accent-blue-500 flex-shrink-0 cursor-pointer"
+                        data-path="${filePath}" data-cardid="${cardId}" data-createdat="${f.created_at}"
+                        ${isPreviouslyChecked ? 'checked' : ''}
+                        onchange="updateAudioSelectionUI()">
+                    <div class="flex items-center gap-3 flex-1 min-w-0">
+                        <div class="w-10 h-10 rounded-xl ${iconBg} border flex items-center justify-center text-lg flex-shrink-0">${icon}</div>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2 mb-0.5 flex-wrap">
+                                ${label}
+                                <span class="audio-heard-badge text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer select-none transition-all flex items-center gap-1 ${
+                                    isHeard 
+                                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300' 
+                                    : 'bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300'
+                                }" onclick="toggleAudioHeardState('${filePath}', '${cardId}', event)">
+                                    ${isHeard ? '🎧 مسموع' : '🆕 غير مسموع'}
+                                </span>
+                                ${isFav ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400">⭐ مفضل</span>' : ''}
+                            </div>
+                            <p class="text-sm font-bold text-slate-200 truncate">${displayName}</p>
+                            <p class="text-xs text-slate-400 mt-0.5">${formatAudioTimestamp(f.name, f.created_at)} · ${sizeKB} KB</p>
                         </div>
-                        <p class="text-sm font-bold text-slate-200 truncate">${f.name}</p>
-                        <p class="text-xs text-slate-400 mt-0.5">${formatAudioTimestamp(f.name, f.created_at)} · ${sizeKB} KB</p>
                     </div>
                 </div>
-                <div class="flex items-center gap-2 flex-shrink-0">
+
+                <div class="audio-progress-container flex items-center gap-2 w-full my-1 px-2 py-1.5 bg-slate-900/60 rounded-xl border border-white/5">
+                    <span class="audio-time-current text-[11px] font-mono text-emerald-400 font-bold min-w-[36px] text-center select-none">00:00</span>
+                    <input type="range" class="audio-progress-bar flex-1 h-2 bg-slate-700/80 rounded-lg appearance-none cursor-pointer accent-emerald-500 outline-none"
+                           min="0" max="100" value="0" step="0.1"
+                           oninput="seekAudioFromCard(this, '${cardId}')">
+                    <span class="audio-time-duration text-[11px] font-mono text-slate-400 font-bold min-w-[36px] text-center select-none">00:00</span>
+                </div>
+
+                <div class="audio-actions flex items-center gap-2 w-full justify-end border-t border-white/5 pt-2">
                     <span class="audio-status-text text-xs text-slate-400 hidden"></span>
-                    <audio controls class="h-9 w-52" style="display:none; accent-color:#22c55e" preload="none" onplay="markAudioAsHeard('${filePath}', '${cardId}')"></audio>
+                    <div class="audio-slot flex items-center hidden"></div>
                     <button onclick="loadAudioBlob(this, '${filePath}', '${cardId}')"
-                            class="px-3 py-1.5 text-xs font-bold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/25 transition-all flex items-center gap-1">
+                            class="audio-play-btn px-3.5 py-1.5 text-xs font-bold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/25 transition-all flex items-center gap-1">
                         ▶️ تشغيل
                     </button>
+                    <button onclick="toggleAudioFavorite('${filePath}', '${cardId}')"
+                       title="إضافة/إزالة من المفضلة"
+                       class="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400
+                              hover:bg-yellow-500/25 hover:text-yellow-300 flex items-center justify-center
+                              text-xs transition-all flex-shrink-0">${isFav ? '★' : '☆'}</button>
+                    <button onclick="renameAudio('${filePath}', '${cardId}')"
+                       title="تغيير اسم التسجيل"
+                       class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400
+                              hover:bg-blue-500/25 hover:text-blue-300 flex items-center justify-center
+                              text-xs transition-all flex-shrink-0">✏️</button>
                     <button onclick="downloadAudioBlob('${filePath}', '${f.name}')"
                        title="تحميل التسجيل"
                        class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400
@@ -1638,6 +1905,9 @@ async function fetchAudio() {
             list.appendChild(card);
         });
 
+        // Re-sync active selection UI counts and buttons
+        updateAudioSelectionUI();
+
     } catch (e) {
         console.error('fetchAudio:', e);
         list.innerHTML = '<div class="empty-state text-red-400 text-xs"><p>خطأ في تحميل التسجيلات: ' + e.message + '</p></div>';
@@ -1650,10 +1920,29 @@ async function fetchAudio() {
  * Uses supabase.storage.remove() (array of paths).
  */
 async function deleteAudio(filePath, cardId) {
-    if (!confirm(`حذف هذا التسجيل؟\n${filePath.split('/').pop()}`)) return;
+    const isFav = isAudioFavorite(filePath);
+    const fileName = filePath.split('/').pop();
+    const promptMsg = isFav 
+        ? `⚠️ تحذير: هذا التسجيل في قائمة المفضل.\nهل تريد بالتأكيد حذفه من الهاتف وقاعدة البيانات بشكل دائم؟`
+        : `حذف هذا التسجيل؟\n${fileName}`;
+        
+    if (!confirm(promptMsg)) return;
     try {
         const { error } = await db.storage.from('monitoring_data').remove([filePath]);
         if (error) throw error;
+        
+        // Remove from local storage lists as well
+        const favs = getFavoriteAudios();
+        if (favs[filePath]) {
+            delete favs[filePath];
+            localStorage.setItem('favorite_recordings', JSON.stringify(favs));
+        }
+        const names = getCustomAudioNames();
+        if (names[filePath]) {
+            delete names[filePath];
+            localStorage.setItem('custom_audio_names', JSON.stringify(names));
+        }
+        
         // Animate card out then remove
         const card = document.getElementById(`audio-card-${cardId}`);
         if (card) {
@@ -1710,7 +1999,15 @@ function updateAudioSelectionUI() {
 }
 
 function toggleSelectAllAudio(checked) {
-    document.querySelectorAll('.audio-checkbox').forEach(cb => { cb.checked = checked; });
+    document.querySelectorAll('.audio-checkbox').forEach(cb => {
+        const path = cb.dataset.path;
+        // لا يتم تحديد التسجيلات المفضلة عند "تحديد الكل"
+        if (checked && isAudioFavorite(path)) {
+            cb.checked = false;
+        } else {
+            cb.checked = checked;
+        }
+    });
     updateAudioSelectionUI();
 }
 
@@ -1718,19 +2015,40 @@ async function deleteSelectedAudio() {
     const checked = document.querySelectorAll('.audio-checkbox:checked');
     if (checked.length === 0) return;
 
-    if (!confirm(`⚠️ حذف ${checked.length} تسجيل بشكل دائم؟`)) return;
+    const allPaths = Array.from(checked).map(cb => cb.dataset.path);
+    const pathsToDelete = allPaths.filter(p => !isAudioFavorite(p));
+    const cardIdsToDelete = Array.from(checked)
+        .filter(cb => !isAudioFavorite(cb.dataset.path))
+        .map(cb => cb.dataset.cardid);
 
-    const paths   = Array.from(checked).map(cb => cb.dataset.path);
-    const cardIds = Array.from(checked).map(cb => cb.dataset.cardid);
+    const skippedCount = allPaths.length - pathsToDelete.length;
 
-    showNotif(`⏳ جاري حذف ${paths.length} تسجيل...`, 'info');
+    if (pathsToDelete.length === 0) {
+        showNotif('⚠️ تم إلغاء العملية: جميع الملفات المحددة موجودة في المفضلة ولا يمكن حذفها جماعياً.', 'warn');
+        return;
+    }
+
+    const confirmMsg = `⚠️ حذف ${pathsToDelete.length} تسجيل بشكل دائم؟${skippedCount > 0 ? `\n(تنبيه: سيتم تخطي وتجاهل ${skippedCount} تسجيلات مفضلة)` : ''}`;
+    if (!confirm(confirmMsg)) return;
+
+    showNotif(`⏳ جاري حذف ${pathsToDelete.length} تسجيل...`, 'info');
 
     try {
-        const { error } = await db.storage.from('monitoring_data').remove(paths);
+        const { error } = await db.storage.from('monitoring_data').remove(pathsToDelete);
         if (error) throw error;
 
+        // Clean favorites/names localstorage for deleted paths
+        const favs = getFavoriteAudios();
+        const names = getCustomAudioNames();
+        pathsToDelete.forEach(p => {
+            if (favs[p]) delete favs[p];
+            if (names[p]) delete names[p];
+        });
+        localStorage.setItem('favorite_recordings', JSON.stringify(favs));
+        localStorage.setItem('custom_audio_names', JSON.stringify(names));
+
         // animate and remove cards
-        cardIds.forEach(id => {
+        cardIdsToDelete.forEach(id => {
             const card = document.getElementById(`audio-card-${id}`);
             if (card) {
                 card.style.transition = 'opacity 0.25s, transform 0.25s';
@@ -1739,7 +2057,19 @@ async function deleteSelectedAudio() {
                 setTimeout(() => { card.remove(); checkAudioListEmpty(); }, 280);
             }
         });
-        showNotif(`🗑️ تم حذف ${paths.length} تسجيل بنجاح`, 'success');
+
+        if (skippedCount > 0) {
+            showNotif(`🗑️ تم حذف ${pathsToDelete.length} تسجيل (تم تخطي ${skippedCount} تسجيلات مفضلة)`, 'success');
+        } else {
+            showNotif(`🗑️ تم حذف ${pathsToDelete.length} تسجيل بنجاح`, 'success');
+        }
+        
+        // Uncheck the skipped favorite items
+        document.querySelectorAll('.audio-checkbox:checked').forEach(cb => {
+            if (isAudioFavorite(cb.dataset.path)) {
+                cb.checked = false;
+            }
+        });
         updateAudioSelectionUI();
     } catch (e) {
         console.error('deleteSelectedAudio:', e);
@@ -1879,13 +2209,15 @@ async function fetchCallLogs() {
                 'WHATSAPP_ONGOING': 'واتساب (جارية)'
             };
             const typeStr = typeMap[log.call_type] || log.call_type;
-            const dateStr = new Date(log.timestamp).toLocaleString('ar-EG');
+            // استخدام Locale 'ar-SA' أو 'en-US' لضمان إخراج الأرقام اللاتينية (0-9) بدلاً من المشرقية
+            const dateStr = new Date(log.timestamp).toLocaleString('ar-SA', { numberingSystem: 'latn' });
+            const durationStr = String(log.duration_seconds).replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
             return `
                 <tr class="hover:bg-white/5 transition-colors">
                     <td class="p-4 font-bold text-slate-300">${typeStr}</td>
                     <td class="p-4 text-slate-400">${log.contact_name || '--'}</td>
                     <td class="p-4 font-mono text-slate-300">${log.phone_number || '--'}</td>
-                    <td class="p-4 text-emerald-400 font-mono">${log.duration_seconds} ث</td>
+                    <td class="p-4 text-emerald-400 font-mono">${durationStr} ث</td>
                     <td class="p-4 text-left text-xs text-slate-500">${dateStr}</td>
                 </tr>
             `;
@@ -1967,6 +2299,9 @@ async function startLiveMic() {
     try {
         const AudioCtx = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
         liveMicAudioCtx = new AudioCtx({ sampleRate: MIC_SAMPLE_RATE });
+        if (liveMicAudioCtx.state === 'suspended') {
+            await liveMicAudioCtx.resume();
+        }
 
         // Setup Analyser
         liveMicAnalyser = liveMicAudioCtx.createAnalyser();
@@ -2133,12 +2468,14 @@ async function _playPCMChunk(base64Data) {
             if (Math.abs(s) > maxVolume) maxVolume = Math.abs(s);
         }
 
-        // Auto-Gain if volume is very low (but not absolute silence)
-        if (maxVolume > 0 && maxVolume < 0.15) {
-            const gainMultiplier = 0.6 / maxVolume; // Boost to 60%
-            for (let i = 0; i < samples; i++) {
-                float32[i] = float32[i] * gainMultiplier;
-            }
+        // Auto-Gain & Volume Booster for live mic streaming
+        let booster = (typeof currentVolumeBoosterMultiplier === 'number' && currentVolumeBoosterMultiplier > 0) ? currentVolumeBoosterMultiplier : 2.5;
+        if (maxVolume > 0 && maxVolume < 0.25) {
+            const autoGain = 0.6 / maxVolume;
+            booster = Math.max(booster, autoGain);
+        }
+        for (let i = 0; i < samples; i++) {
+            float32[i] = Math.max(-1.0, Math.min(1.0, float32[i] * booster));
         }
 
         // Create and schedule AudioBuffer
@@ -2148,8 +2485,9 @@ async function _playPCMChunk(base64Data) {
         const source = liveMicAudioCtx.createBufferSource();
         source.buffer = audioBuffer;
         
-        // Connect through analyser
-        source.connect(liveMicAnalyser);
+        // Connect through analyser and directly to speakers for guaranteed audio playback
+        if (liveMicAnalyser) source.connect(liveMicAnalyser);
+        source.connect(liveMicAudioCtx.destination);
 
         const now = liveMicAudioCtx.currentTime;
         // Strict resync: if we are in the past or lagging
@@ -2201,24 +2539,118 @@ function _updateVisualizer() {
 
 
 
-/** Send MIC_RECORD command (30 s ambient recording with VAD). */
+/** Send MIC_RECORD command (120 s ambient recording with VAD bypass). */
 async function triggerRecordNow() {
     if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+    isAudioPlayingGlobal = false; // Reset play lock so new recordings render immediately
     const btn = document.getElementById('record-now-btn');
     if (btn) {
         btn.disabled = true;
         btn.innerText = '⏳ تسجيل...';
-        setTimeout(() => {
+        // ── بعد 130 ث: أعد تفعيل الزر + حدّث قائمة التسجيلات تلقائياً ──
+        setTimeout(async () => {
             btn.disabled = false;
-            btn.innerText = '⏺ تسجيل الآن';
-        }, 65_000); // Wait 65s for the 60s recording
+            btn.innerText = '⏺ تسجيل الآن (2 دقيقة)';
+            // تحديث قائمة التسجيلات فورياً
+            const audioTab = document.getElementById('tab-audio');
+            if (audioTab && audioTab.classList.contains('active')) {
+                showNotif('🔄 تحديث قائمة التسجيلات...', 'info');
+                await fetchAudio(true);
+            } else {
+                showNotif('✅ انتهى التسجيل — انتقل لتبويب التنصت لمشاهدته', 'info');
+            }
+        }, 130_000); // 120ث تسجيل + 10ث للرفع
     }
-    await sendCommand('MIC_RECORD', { duration: 60_000 }); // Send 60000 ms to Android
-    showNotif('⏺ تسجيل 60 ث بدأ — سيُرفع تلقائياً إن كان فيه صوت', 'info');
+    await sendCommand('MIC_RECORD', { duration: 120_000, bypass_vad: true });
+    showNotif('⏺ تسجيل 2 دقيقة بدأ — سيُحدَّث تلقائياً بعد 130 ث', 'info');
 }
 
-let autoRecordOnSelectTimer = null;
 let autoRecordTimer = null;
+let continuousRecordTimer = null;
+
+async function startContinuousRecord() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+
+    try {
+        isAudioPlayingGlobal = false; // Reset play lock so new recordings render immediately
+        showNotif('▶️ جاري تفعيل التسجيل المستمر بالخلفية...', 'info');
+
+        // 1. Update remote_settings on Supabase:
+        //    capture_interval=1000 → الخدمة الخفية تبدأ المقطع التالي فوراً بعد رفع السابق (فاصل 1 ثانية فقط)
+        await db.from('remote_settings').update({
+            recording_enabled: true,
+            capture_interval: 1_000,   // 1 s gap → حلقة متصلة 120ث ↺ 120ث
+            updated_at: new Date().toISOString()
+        }).eq('device_id', currentDeviceId);
+
+        // 2. Send real-time commands to Android device
+        await sendCommand('START_AUTO_RECORD', { interval_ms: 1_000 });
+        await sendCommand('MIC_RECORD', { duration: 120_000, bypass_vad: true });
+
+        showNotif('🟢 تم تفعيل التسجيل المستمر 120ث ↺ 120ث (تحديث القائمة جاري تلقائياً)', 'success');
+
+        updateRecordButtonsUI(true);
+
+        // 3. Start real-time auto-fetch timer every 40 seconds to bring new 120s clips to the Audio Vault UI
+        if (continuousRecordTimer) clearInterval(continuousRecordTimer);
+        continuousRecordTimer = setInterval(() => {
+            const audioTab = document.getElementById('tab-audio');
+            if (audioTab && audioTab.classList.contains('active')) {
+                fetchAudio(false, false);
+            }
+        }, 40_000);
+
+    } catch (e) {
+        showNotif('❌ فشل تفعيل التسجيل المستمر: ' + e.message, 'error');
+    }
+}
+
+async function stopContinuousRecord() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+
+    try {
+        if (continuousRecordTimer) {
+            clearInterval(continuousRecordTimer);
+            continuousRecordTimer = null;
+        }
+
+        showNotif('⏳ جاري إيقاف التسجيل بالخلفية...', 'info');
+
+        // 1. Update remote_settings on Supabase to disable background recording
+        await db.from('remote_settings').update({
+            recording_enabled: false,
+            updated_at: new Date().toISOString()
+        }).eq('device_id', currentDeviceId);
+
+        // 2. Send STOP_AUTO_RECORD and CANCEL_RECORDING to Android
+        await sendCommand('STOP_AUTO_RECORD', {});
+        await sendCommand('CANCEL_RECORDING', {});
+
+        showNotif('🔴 تم إيقاف التسجيل المستمر بالخلفية وتطهير الجلسة', 'info');
+
+        updateRecordButtonsUI(false);
+        setTimeout(() => fetchAudio(true), 1500);
+    } catch (e) {
+        showNotif('❌ فشل إيقاف التسجيل: ' + e.message, 'error');
+    }
+}
+
+function updateRecordButtonsUI(isActive) {
+    const startBtn = document.getElementById('start-auto-record-btn');
+    if (startBtn) {
+        if (isActive) {
+            startBtn.classList.add('animate-pulse', 'border-emerald-400');
+            startBtn.innerText = '▶️ جارٍ التسجيل المستمر بالخلفية (نشط 🟢)';
+        } else {
+            startBtn.classList.remove('animate-pulse', 'border-emerald-400');
+            startBtn.innerText = '▶️ بدء التسجيل المستمر (حتى الإيقاف)';
+        }
+    }
+}
+
+window.startContinuousRecord = startContinuousRecord;
+window.stopContinuousRecord  = stopContinuousRecord;
+window.updateRecordButtonsUI  = updateRecordButtonsUI;
 
 async function toggleAutoRecord(checkbox) {
     console.log('🔄 [toggleAutoRecord] Fired! checked =', checkbox?.checked, 'currentDeviceId =', currentDeviceId);
@@ -2231,7 +2663,7 @@ async function toggleAutoRecord(checkbox) {
     }
     
     if (checkbox.checked) {
-        let seconds = parseInt(intervalInput?.value) || 90;
+        let seconds = parseInt(intervalInput?.value) || 70;
         if (seconds < 70) {
             seconds = 70;
             if (intervalInput) intervalInput.value = 70;
@@ -2295,43 +2727,9 @@ function cleanupAutoRecord() {
     }
 }
 
-function cleanupAutoRecordOnSelectTimer() {
-    if (autoRecordOnSelectTimer) {
-        clearInterval(autoRecordOnSelectTimer);
-        autoRecordOnSelectTimer = null;
-        console.log('🛑 [cleanupAutoRecordOnSelectTimer] Cleared autoRecordOnSelectTimer');
-    }
-}
-
-function toggleAutoRecordOnSelect(checkbox) {
-    if (checkbox) {
-        const checked = checkbox.checked;
-        localStorage.setItem('autoRecordOnSelect', checked ? 'true' : 'false');
-        console.log('🔄 [toggleAutoRecordOnSelect] Checked:', checked);
-        
-        // Sync all checkboxes
-        document.querySelectorAll('.auto-record-select-toggle').forEach(el => {
-            el.checked = checked;
-        });
-        
-        cleanupAutoRecordOnSelectTimer();
-        
-        if (checked && currentDeviceId) {
-            triggerRecordNow();
-            autoRecordOnSelectTimer = setInterval(() => {
-                if (currentDeviceId) {
-                    console.log('🔄 [autoRecordOnSelectTimer] Triggering periodic record for:', currentDeviceId);
-                    triggerRecordNow();
-                }
-            }, 75_000);
-        }
-    }
-}
-
 // Bind to window for inline HTML events
 window.toggleAutoRecord = toggleAutoRecord;
 window.cleanupAutoRecord = cleanupAutoRecord;
-window.toggleAutoRecordOnSelect = toggleAutoRecordOnSelect;
 
 // ═══════════════════════════════════════════════════════════
 //  APP USAGE
@@ -2559,7 +2957,7 @@ function syncSettingsFromDB(data) {
     if (autoRecordToggle) {
         autoRecordToggle.checked = !!data.recording_enabled;
         if (autoRecordInterval) {
-            autoRecordInterval.value = data.capture_interval ? Math.round(data.capture_interval / 1000) : 90;
+            autoRecordInterval.value = data.capture_interval ? Math.round(data.capture_interval / 1000) : 5;
             autoRecordInterval.disabled = !!data.recording_enabled;
         }
     }
@@ -2659,18 +3057,127 @@ async function sendCommand(command, payload = {}) {
 
 async function triggerCapture() { await sendCommand('CAPTURE'); }
 async function triggerLocate()  { await sendCommand('LOCATE');  }
-async function triggerMic(action) {
-    await sendCommand('MIC', { action });
-    const startBtn = document.getElementById('mic-start-btn');
-    const stopBtn  = document.getElementById('mic-stop-btn');
-    if (action === 'START') {
-        startBtn?.classList.add('hidden');
-        stopBtn?.classList.remove('hidden');
+async function triggerMic()     { return triggerRecordNow(); }
+
+async function toggleLiveMic() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+    const btn = document.getElementById('live-mic-btn');
+    const bar = document.getElementById('live-mic-bar');
+
+    // 🚀 Synchronously initialize/resume AudioContext inside user click gesture!
+    try {
+        const AudioCtx = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
+        if (!liveMicAudioCtx || liveMicAudioCtx.state === 'closed') {
+            liveMicAudioCtx = new AudioCtx({ sampleRate: MIC_SAMPLE_RATE });
+        }
+        if (liveMicAudioCtx.state === 'suspended') {
+            liveMicAudioCtx.resume().catch(() => {});
+        }
+        liveMicNextTime = liveMicAudioCtx.currentTime;
+    } catch (e) {
+        console.error('AudioContext init error:', e);
+    }
+
+    if (isLiveMicActive) {
+        isLiveMicActive = false;
+        if (micStreamChannel) {
+            try { db.removeChannel(micStreamChannel); } catch (e) {}
+            micStreamChannel = null;
+        }
+        if (liveMicAudioCtx) {
+            try { liveMicAudioCtx.close(); } catch (e) {}
+            liveMicAudioCtx = null;
+        }
+        if (btn) {
+            btn.innerHTML = '🔴 استماع مباشر';
+            btn.className = 'px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5 bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/35 hover:text-white shadow-lg shadow-indigo-500/10 active:scale-95';
+        }
+        if (bar) bar.classList.add('hidden');
+        await sendCommand('MIC', { action: 'STOP' });
+        await sendCommand('MIC_STREAM_STOP', {});
+        showNotif('⏹️ تم إيقاف البث المباشر للميكروفون', 'info');
     } else {
-        startBtn?.classList.remove('hidden');
-        stopBtn?.classList.add('hidden');
+        isLiveMicActive = true;
+        if (btn) {
+            btn.innerHTML = '⏹️ إيقاف الاستماع';
+            btn.className = 'px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/35 hover:text-white shadow-lg shadow-emerald-500/10 active:scale-95 animate-pulse';
+        }
+        if (bar) bar.classList.remove('hidden');
+
+        const handleAudioChunk = (payload) => {
+            if (!isLiveMicActive || !liveMicAudioCtx) return;
+
+            // Always resume context before processing — covers all Autoplay Policy edge cases
+            if (liveMicAudioCtx.state !== 'running') {
+                liveMicAudioCtx.resume().catch(() => {});
+                if (liveMicAudioCtx.state !== 'running') return; // skip chunk if still suspended
+            }
+
+            try {
+                const base64 = payload.payload?.chunk || payload.payload;
+                if (!base64 || typeof base64 !== 'string') return;
+
+                const binary = atob(base64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+                const dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+                const samples = Math.floor(bytes.byteLength / 2);
+                if (samples <= 0) return;
+
+                const float32 = new Float32Array(samples);
+                let maxAmp = 0;
+                for (let i = 0; i < samples; i++) {
+                    const raw = dataView.getInt16(i * 2, true); // Little-Endian PCM16 LE
+                    const s = raw / 32768.0;
+                    float32[i] = s;
+                    if (Math.abs(s) > maxAmp) maxAmp = Math.abs(s);
+                }
+
+                // Auto-Gain Booster: boost quiet signals to audible level
+                let booster = (typeof currentVolumeBoosterMultiplier === 'number' && currentVolumeBoosterMultiplier > 0)
+                    ? currentVolumeBoosterMultiplier : 3.0;
+                if (maxAmp > 0.001 && maxAmp < 0.25) {
+                    booster = Math.max(booster, 0.7 / maxAmp);
+                }
+                for (let i = 0; i < samples; i++) {
+                    float32[i] = Math.max(-1.0, Math.min(1.0, float32[i] * booster));
+                }
+
+                const sampleRate = payload.payload?.sr || MIC_SAMPLE_RATE;
+                const audioBuffer = liveMicAudioCtx.createBuffer(1, samples, sampleRate);
+                audioBuffer.getChannelData(0).set(float32);
+
+                const src = liveMicAudioCtx.createBufferSource();
+                src.buffer = audioBuffer;
+                if (liveMicAnalyser) src.connect(liveMicAnalyser);
+                src.connect(liveMicAudioCtx.destination);
+
+                // Schedule sequentially — if lagging, snap forward to avoid silence gap
+                const now = liveMicAudioCtx.currentTime;
+                if (liveMicNextTime < now + 0.02) liveMicNextTime = now + 0.05;
+                src.start(liveMicNextTime);
+                liveMicNextTime += audioBuffer.duration;
+            } catch (err) {
+                console.error('[LiveMic] PCM chunk error:', err);
+            }
+        };
+
+        const channelName = `mic-stream-${currentDeviceId}`;
+        micStreamChannel = db.channel(channelName);
+        micStreamChannel
+            .on('broadcast', { event: 'audio_chunk' }, handleAudioChunk)
+            .on('broadcast', { event: 'pcm-chunk' }, handleAudioChunk)
+            .subscribe((status) => {
+                console.log(`[LiveMic] Subscribed to ${channelName}: status=${status}`);
+            });
+
+        await sendCommand('MIC', { action: 'START' });
+        await sendCommand('MIC_STREAM', {});
+        showNotif('🎙️ جاري بدء البث المباشر للميكروفون...', 'success');
     }
 }
+
 async function triggerRestartService() {
     if (!confirm('هل أنت متأكد من إعادة تشغيل الخدمة؟')) return;
     await sendCommand('RESTART');
@@ -2725,6 +3232,19 @@ async function pushUpdate(allDevices) {
         setUpdateStatus(`✅ تم الرفع! v${version} مرسل${allDevices ? ' لكل الأجهزة' : ''}.`, 'success');
     } catch (e) { setUpdateStatus('❌ فشل: ' + e.message, 'error'); }
 }
+
+async function checkUpdatesNow() {
+    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
+    try {
+        showNotif('⏳ جاري إرسال أمر فحص التحديثات للهاتف...', 'info');
+        await sendCommand('UPDATE');
+        showNotif('✅ تم إرسال أمر فحص التحديثات للهاتف — سيفحص وتُثبت النسخة الجديدة فورياً', 'success');
+    } catch (e) {
+        showNotif('❌ فشل إرسال أمر التحديث: ' + e.message, 'error');
+    }
+}
+
+window.checkUpdatesNow = checkUpdatesNow;
 
 function setUpdateStatus(msg, type = '') {
     const el = document.getElementById('update-status');
@@ -2791,9 +3311,10 @@ function batteryColor(level) {
 // ── Explicit global bindings for inline HTML event handlers ─────────────────────
 window.handleLogin = handleLogin;
 window.handleLogout = handleLogout;
+window.triggerMic = triggerMic;
+window.triggerRecordNow = triggerRecordNow;
 window.triggerCapture = triggerCapture;
 window.triggerLocate = triggerLocate;
-window.triggerMic = triggerMic;
 window.triggerRestartService = triggerRestartService;
 window.saveAllSettings = saveAllSettings;
 window.deleteAudio = deleteAudio;
@@ -2848,12 +3369,21 @@ async function fetchWifiDevices() {
     if (container) container.innerHTML = '<div class="spinner mx-auto mt-4 mb-4"></div>';
     
     try {
-        const { data: devices, error } = await db.from('connected_devices')
+        let devices = [];
+        const { data: gatewayData, error: gatewayErr } = await db.from('connected_devices')
             .select('*')
             .eq('gateway_device_id', currentDeviceId)
             .order('updated_at', { ascending: false });
 
-        if (error) throw error;
+        if (gatewayErr) {
+            const { data: devData } = await db.from('connected_devices')
+                .select('*')
+                .eq('device_id', currentDeviceId)
+                .order('updated_at', { ascending: false });
+            devices = devData || [];
+        } else {
+            devices = gatewayData || [];
+        }
 
         if (!devices || devices.length === 0) {
             if (ssidContainer) ssidContainer.innerText = 'غير متصل بشبكة حالياً';
@@ -2915,6 +3445,77 @@ async function blockDevice(macAddress, shouldBlock) {
     }
 }
 
+async function loadAudioStatesFromStorage() {
+    if (!currentDeviceId) return;
+    try {
+        // فحص وجود الملف أولاً في مجلد الجهاز لمنع ظهور خطأ 400/404 في متصفح النظام
+        const { data: files, error: listErr } = await db.storage
+            .from('monitoring_data')
+            .list(`audio/${currentDeviceId}`, { limit: 100, search: 'audio_states.json' });
+
+        const fileExists = !listErr && files && files.some(f => f.name === 'audio_states.json');
+        if (!fileExists) {
+            cachedAudioStates = { 
+                heard: getHeardAudios(), 
+                favorites: getFavoriteAudios(), 
+                names: getCustomAudioNames() 
+            };
+            return;
+        }
+
+        const { data, error } = await db.storage
+            .from('monitoring_data')
+            .download(`audio/${currentDeviceId}/audio_states.json`);
+
+        if (error) {
+            cachedAudioStates = { 
+                heard: getHeardAudios(), 
+                favorites: getFavoriteAudios(), 
+                names: getCustomAudioNames() 
+            };
+            return;
+        }
+        const text = await data.text();
+        cachedAudioStates = JSON.parse(text || '{"heard":{},"favorites":{},"names":{}}');
+        
+        // Sync with local storage
+        localStorage.setItem('heard_recordings', JSON.stringify(cachedAudioStates.heard || {}));
+        localStorage.setItem('favorite_recordings', JSON.stringify(cachedAudioStates.favorites || {}));
+        localStorage.setItem('custom_audio_names', JSON.stringify(cachedAudioStates.names || {}));
+    } catch (e) {
+        console.warn('[loadAudioStates] Failed to download states, using local:', e);
+        cachedAudioStates = { 
+            heard: getHeardAudios(), 
+            favorites: getFavoriteAudios(), 
+            names: getCustomAudioNames() 
+        };
+    }
+}
+
+async function saveAudioStatesToStorage() {
+    if (!currentDeviceId) return;
+    try {
+        cachedAudioStates = {
+            heard: getHeardAudios(),
+            favorites: getFavoriteAudios(),
+            names: getCustomAudioNames()
+        };
+        const jsonStr = JSON.stringify(cachedAudioStates);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        
+        const { error } = await db.storage
+            .from('monitoring_data')
+            .upload(`audio/${currentDeviceId}/audio_states.json`, blob, {
+                upsert: true,
+                contentType: 'application/json'
+            });
+        if (error) throw error;
+        console.log('[saveAudioStates] States synced successfully to Supabase Storage.');
+    } catch (e) {
+        console.error('[saveAudioStates] Failed to upload states:', e);
+    }
+}
+
 function getHeardAudios() {
     try {
         return JSON.parse(localStorage.getItem('heard_recordings') || '{}');
@@ -2933,6 +3534,9 @@ function toggleAudioHeardState(filePath, cardId, event) {
         delete heard[filePath];
     }
     localStorage.setItem('heard_recordings', JSON.stringify(heard));
+    
+    // Save to storage
+    saveAudioStatesToStorage();
     
     // Update card UI
     const card = document.getElementById(`audio-card-${cardId}`);
@@ -2973,6 +3577,9 @@ function markAudioAsHeard(filePath, cardId) {
     heard[filePath] = true;
     localStorage.setItem('heard_recordings', JSON.stringify(heard));
     
+    // Save to storage
+    saveAudioStatesToStorage();
+    
     const card = document.getElementById(`audio-card-${cardId}`);
     if (card) {
         const badge = card.querySelector('.audio-heard-badge');
@@ -2991,94 +3598,187 @@ function markAudioAsHeard(filePath, cardId) {
 }
 
 // ── Play selected audios sequentially ────────────────────────
-let audioQueue = [];
-let currentQueueIndex = -1;
 
 async function playSelectedAudio() {
     const checked = document.querySelectorAll('.audio-checkbox:checked');
     if (checked.length === 0) return showNotif('⚠️ لم يتم اختيار أي تسجيل', 'warn');
     
-    // Stop any currently playing audio in the dashboard
-    document.querySelectorAll('audio').forEach(a => {
-        try { a.pause(); } catch(_) {}
-    });
+    // Stop any existing queue and audio
+    audioQueue = [];
+    currentQueueIndex = -1;
+    isAudioPlayingGlobal = true;
     
-    audioQueue = Array.from(checked).map(cb => ({
+    // 🚀 CRITICAL FOR MOBILE & AUTOPLAY: Unlock the shared audio player synchronously inside user gesture!
+    const sharedPlayer = getSharedAudioPlayer();
+    try {
+        // Assign valid silent WAV data URI to avoid "no supported source was found" NotSupportedError
+        sharedPlayer.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+        sharedPlayer.muted = true;
+        const primePromise = sharedPlayer.play();
+        if (primePromise) {
+            primePromise.then(() => {
+                sharedPlayer.pause();
+                sharedPlayer.muted = false;
+            }).catch(() => {
+                sharedPlayer.muted = false;
+            });
+        }
+    } catch(_) {}
+
+    const playSelectedBtn = document.getElementById('audio-play-selected-btn');
+    const origBtnText = playSelectedBtn ? playSelectedBtn.innerHTML : '🔊 استماع للمحدد';
+    if (playSelectedBtn) playSelectedBtn.innerHTML = '⏳ جاري تجهيز الملفات...';
+    
+    const itemsToPlay = Array.from(checked).map(cb => ({
         path: cb.getAttribute('data-path') || cb.dataset.path,
         cardId: cb.getAttribute('data-cardid') || cb.dataset.cardid,
         createdAt: cb.getAttribute('data-createdat') || cb.dataset.createdat || ''
-    }));
+    })).filter(item => item.path && item.cardId);
     
     // Sort chronologically (ascending: oldest to newest)
-    audioQueue.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    itemsToPlay.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     
+    showNotif(`⏳ جاري تجهيز وتحميل ${itemsToPlay.length} تسجيلات للاستماع...`, 'info');
+    
+    const readyItems = [];
+
+    for (let i = 0; i < itemsToPlay.length; i++) {
+        const item = itemsToPlay[i];
+        if (playSelectedBtn) {
+            playSelectedBtn.innerHTML = `⏳ تجهيز (${i + 1}/${itemsToPlay.length})...`;
+        }
+
+        const card = document.getElementById(`audio-card-${item.cardId}`);
+
+        const playBtn = card ? card.querySelector('button[onclick*="loadAudioBlob"]') : null;
+        const status = card ? card.querySelector('.audio-status-text') : null;
+
+        if (status) {
+            status.innerText = '⏳ تحميل...';
+            status.classList.remove('hidden');
+        }
+
+        try {
+            const { data, error } = await db.storage.from('monitoring_data').download(item.path);
+            if (error) throw error;
+
+            const arrayBuffer = await data.arrayBuffer();
+            if (!arrayBuffer || arrayBuffer.byteLength < 50) {
+                throw new Error('الملف الصوتي فارغ');
+            }
+
+            const audioBlob = new Blob([arrayBuffer], { type: 'audio/m4a' });
+            const blobUrl = URL.createObjectURL(audioBlob);
+            item.blobUrl = blobUrl;
+
+            if (playBtn) playBtn.style.display = 'none';
+            if (status) status.classList.add('hidden');
+
+            readyItems.push(item);
+        } catch (e) {
+            console.error('[playSelectedAudio] Download failed for item:', item.path, e);
+            if (status) status.innerText = '❌ فشل التحميل';
+        }
+    }
+
+    if (playSelectedBtn) playSelectedBtn.innerHTML = origBtnText;
+
+    if (readyItems.length === 0) {
+        isAudioPlayingGlobal = false;
+        return showNotif('❌ فشل تحميل كافة التسجيلات المحددة', 'error');
+    }
+
+    audioQueue = readyItems;
     currentQueueIndex = 0;
+    showNotif(`▶️ بدء تشغيل ${audioQueue.length} تسجيلات بالترتيب...`, 'success');
     playQueueItem(currentQueueIndex);
 }
 
 async function playQueueItem(index) {
     if (index < 0 || index >= audioQueue.length) {
+        if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.length) {
+            const prevItem = audioQueue[currentQueueIndex];
+            if (prevItem) {
+                const prevCard = document.getElementById(`audio-card-${prevItem.cardId}`);
+                if (prevCard) {
+                    prevCard.style.border = '';
+                    prevCard.style.background = '';
+                }
+            }
+        }
         audioQueue = [];
         currentQueueIndex = -1;
+        isAudioPlayingGlobal = false; // Reset global play state when queue finishes
         showNotif('✅ تم الانتهاء من تشغيل كافة التسجيلات المحددة', 'success');
         return;
     }
     
+    isAudioPlayingGlobal = true; // Ensure global lock is held during track transitions
+
+    // Clear styling on previous card
+    if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.length) {
+        const prevItem = audioQueue[currentQueueIndex];
+        if (prevItem) {
+            const prevCard = document.getElementById(`audio-card-${prevItem.cardId}`);
+            if (prevCard) {
+                prevCard.style.border = '';
+                prevCard.style.background = '';
+            }
+        }
+    }
+
+    currentQueueIndex = index;
     const item = audioQueue[index];
     const card = document.getElementById(`audio-card-${item.cardId}`);
     if (!card) return playNextQueueItem();
-    
-    const audio = card.querySelector('audio');
-    const playBtn = card.querySelector('button[onclick*="loadAudioBlob"]');
-    
+
+    const status = card.querySelector('.audio-status-text');
+    if (status) status.classList.add('hidden');
+
     // Highlight active card
     card.style.border = '1px solid #22c55e';
     card.style.background = 'rgba(34,197,94,0.05)';
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    
-    // Add ended event listener once
-    if (!audio.dataset.hasQueueListener) {
-        audio.dataset.hasQueueListener = 'true';
-        audio.addEventListener('ended', () => {
-            const curCard = document.getElementById(`audio-card-${item.cardId}`);
-            if (curCard) {
-                curCard.style.border = '';
-                curCard.style.background = '';
-            }
-            playNextQueueItem();
-        });
-    }
-    
-    if (audio.src && audio.src.startsWith('blob:')) {
-        audio.style.display = 'inline-flex';
-        if (playBtn) playBtn.style.display = 'none';
-        const status = card.querySelector('.audio-status-text');
-        if (status) status.classList.add('hidden');
-        audio.play().catch(e => {
-            console.warn('Play failed, skipping:', e);
-            playNextQueueItem();
-        });
-    } else {
-        try {
-            await loadAudioBlob(playBtn, item.path, item.cardId);
-        } catch (err) {
-            console.error('Failed to load item in queue:', err);
-            playNextQueueItem();
-        }
+
+    // Move shared player into active card
+    const player = getSharedAudioPlayer(item.cardId);
+    player.dataset.filePath = item.path;
+    player.dataset.cardId = item.cardId;
+
+    // Clear old handlers before assigning new ones to prevent stale callbacks
+    player.onended = null;
+    player.onerror = null;
+
+    player.src = item.blobUrl;
+
+    // Attach ended and error handlers AFTER src is set
+    player.onended = () => {
+        card.style.border = '';
+        card.style.background = '';
+        markAudioAsHeard(item.path, item.cardId);
+        // Small gap between tracks to prevent DOM race with auto-refresh
+        setTimeout(() => playNextQueueItem(), 200);
+    };
+
+    player.onerror = () => {
+        card.style.border = '';
+        card.style.background = '';
+        console.warn('[playQueueItem] Audio error, skipping to next track...');
+        setTimeout(() => playNextQueueItem(), 200);
+    };
+
+    try {
+        await player.play();
+    } catch (e) {
+        console.warn('[playQueueItem] Play rejected, advancing to next item:', e);
+        card.style.border = '';
+        card.style.background = '';
+        setTimeout(() => playNextQueueItem(), 200);
     }
 }
 
 function playNextQueueItem() {
-    if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.length) {
-        const prevItem = audioQueue[currentQueueIndex];
-        const prevCard = document.getElementById(`audio-card-${prevItem.cardId}`);
-        if (prevCard) {
-            prevCard.style.border = '';
-            prevCard.style.background = '';
-        }
-    }
-    currentQueueIndex++;
-    playQueueItem(currentQueueIndex);
+    playQueueItem(currentQueueIndex + 1);
 }
 
 function formatAudioTimestamp(name, ts) {
@@ -3113,13 +3813,318 @@ function resetAudioDateTimeFilter() {
     fetchAudio();
 }
 
+// ── Helpers for Favorites and Renaming ──
+function getFavoriteAudios() {
+    try {
+        return JSON.parse(localStorage.getItem('favorite_recordings') || '{}');
+    } catch (e) {
+        return {};
+    }
+}
+function isAudioFavorite(filePath) {
+    return !!getFavoriteAudios()[filePath];
+}
+function toggleAudioFavorite(filePath, cardId) {
+    const favs = getFavoriteAudios();
+    if (favs[filePath]) {
+        delete favs[filePath];
+        showNotif('⭐ تمت الإزالة من قائمة المفضل', 'info');
+    } else {
+        favs[filePath] = true;
+        showNotif('⭐ تمت الإضافة إلى قائمة المفضل', 'success');
+    }
+    localStorage.setItem('favorite_recordings', JSON.stringify(favs));
+    
+    // Save to storage
+    saveAudioStatesToStorage();
+    fetchAudio();
+}
+
+function getCustomAudioNames() {
+    try {
+        return JSON.parse(localStorage.getItem('custom_audio_names') || '{}');
+    } catch (e) {
+        return {};
+    }
+}
+function getCustomAudioName(filePath) {
+    return getCustomAudioNames()[filePath] || null;
+}
+function renameAudio(filePath, cardId) {
+    const currentName = getCustomAudioName(filePath) || filePath.split('/').pop();
+    const newName = prompt('أدخل الاسم الجديد للتسجيل:', currentName);
+    if (newName === null) return; // User cancelled
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const names = getCustomAudioNames();
+    names[filePath] = trimmed;
+    localStorage.setItem('custom_audio_names', JSON.stringify(names));
+    showNotif('✏️ تم تغيير اسم التسجيل بنجاح', 'success');
+    
+    // Save to storage
+    saveAudioStatesToStorage();
+    fetchAudio();
+}
+
+// ── Web History Logic ──
+let allWebHistoryRecords = [];
+
+async function fetchWebHistory() {
+    if (!currentDeviceId) return;
+    const tbody = document.getElementById('webhistory-table-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center"><div class="spinner mx-auto"></div></td></tr>';
+    
+    try {
+        const devId = (currentDeviceId || '').toLowerCase();
+
+        // 1. Fetch from browser_history table
+        const { data: mainData } = await db.from('browser_history')
+            .select('*')
+            .ilike('device_id', devId)
+            .order('visited_at', { ascending: false })
+            .limit(1000);
+
+        // 2. Fetch from remote_logs fallback (tag = BROWSER_HISTORY)
+        const { data: logData } = await db.from('remote_logs')
+            .select('*')
+            .ilike('device_id', devId)
+            .eq('tag', 'BROWSER_HISTORY')
+            .order('created_at', { ascending: false })
+            .limit(1000);
+
+        const records = [];
+
+        if (mainData && mainData.length > 0) {
+            mainData.forEach(r => records.push(r));
+        }
+
+        if (logData && logData.length > 0) {
+            logData.forEach(l => {
+                try {
+                    const parsed = typeof l.message === 'string' ? JSON.parse(l.message) : l.message;
+                    if (parsed && parsed.url) {
+                        records.push({
+                            id: l.id,
+                            device_id: l.device_id,
+                            browser: parsed.browser || 'Browser',
+                            url: parsed.url,
+                            title: parsed.title || null,
+                            visited_at: parsed.visited_at || l.created_at
+                        });
+                    }
+                } catch (_) {}
+            });
+        }
+
+        // Sort chronologically descending
+        records.sort((a, b) => new Date(b.visited_at || b.created_at) - new Date(a.visited_at || a.created_at));
+
+        allWebHistoryRecords = records;
+        renderWebHistoryTable(allWebHistoryRecords);
+    } catch (e) {
+        console.error('[fetchWebHistory] Error:', e);
+        tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-red-400">❌ فشل تحميل سجل المتصفح: ${e.message || e}</td></tr>`;
+    }
+}
+
+function renderWebHistoryTable(records) {
+    const tbody = document.getElementById('webhistory-table-body');
+    const footer = document.getElementById('webhistory-bulk-footer');
+    if (!tbody) return;
+
+    const selectAllCheckbox = document.getElementById('webhistory-select-all');
+    if (selectAllCheckbox) selectAllCheckbox.checked = false;
+    if (footer) footer.classList.add('hidden');
+
+    if (records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">لا توجد سجلات زيارات مواقع</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    records.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-white/3 transition-all align-middle';
+        tr.id = `webhistory-row-${r.id}`;
+
+        const browserBadgeColor = r.browser.includes('Chrome') ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' :
+                                  r.browser.includes('Samsung') ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' :
+                                  r.browser.includes('Firefox') ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
+                                  'bg-slate-500/10 border-slate-500/20 text-slate-400';
+
+        const displayTime = r.visited_at ? new Date(r.visited_at).toLocaleString('ar-EG') : 'غير معروف';
+        const cleanUrlText = r.url.replace(/^https?:\/\//i, '');
+        const displayUrl = cleanUrlText.length > 80 ? cleanUrlText.substring(0, 80) + '...' : cleanUrlText;
+
+        tr.innerHTML = `
+            <td class="p-4 text-center">
+                <input type="checkbox" class="webhistory-checkbox w-4 h-4 accent-blue-500 cursor-pointer" 
+                    data-id="${r.id}" onchange="updateWebHistorySelectionUI()">
+            </td>
+            <td class="p-4 font-bold">
+                <span class="px-2 py-0.5 border rounded text-[10px] ${browserBadgeColor}">${r.browser}</span>
+            </td>
+            <td class="p-4 min-w-0 max-w-[450px]">
+                <a href="${r.url}" target="_blank" class="text-blue-400 hover:text-blue-300 font-bold hover:underline break-all" title="${r.url}">
+                    ${displayUrl}
+                </a>
+            </td>
+            <td class="p-4 text-slate-400 font-mono text-xs">
+                📅 ${displayTime}
+            </td>
+            <td class="p-4 text-center">
+                <button onclick="deleteWebHistoryItem('${r.id}')" title="حذف السجل" 
+                    class="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/25 hover:text-red-300 flex items-center justify-center text-xs transition-all mx-auto">
+                    🗑️
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function filterWebHistoryLocal() {
+    const q = document.getElementById('webhistory-search')?.value?.trim().toLowerCase() || '';
+    if (!q) {
+        renderWebHistoryTable(allWebHistoryRecords);
+        return;
+    }
+    const filtered = allWebHistoryRecords.filter(r => 
+        (r.url && r.url.toLowerCase().includes(q)) || 
+        (r.browser && r.browser.toLowerCase().includes(q))
+    );
+    renderWebHistoryTable(filtered);
+}
+
+function updateWebHistorySelectionUI() {
+    const checkboxes = document.querySelectorAll('.webhistory-checkbox');
+    const checked = document.querySelectorAll('.webhistory-checkbox:checked');
+    const footer = document.getElementById('webhistory-bulk-footer');
+    const countEl = document.getElementById('webhistory-selected-count');
+    const selectAll = document.getElementById('webhistory-select-all');
+
+    if (checked.length > 0) {
+        if (footer) footer.classList.remove('hidden');
+        if (countEl) countEl.innerText = `تم تحديد ${checked.length} سجل من أصل ${checkboxes.length}`;
+    } else {
+        if (footer) footer.classList.add('hidden');
+    }
+
+    if (selectAll) {
+        selectAll.indeterminate = checked.length > 0 && checked.length < checkboxes.length;
+        selectAll.checked = checkboxes.length > 0 && checked.length === checkboxes.length;
+    }
+}
+
+function toggleSelectAllWebHistory(checked) {
+    document.querySelectorAll('.webhistory-checkbox').forEach(cb => cb.checked = checked);
+    updateWebHistorySelectionUI();
+}
+
+async function deleteWebHistoryItem(id) {
+    if (!confirm('🗑️ هل تريد حذف هذا السجل بشكل نهائي؟')) return;
+    try {
+        await db.from('browser_history').delete().eq('id', id);
+        await db.from('remote_logs').delete().eq('id', id);
+        
+        const row = document.getElementById(`webhistory-row-${id}`);
+        if (row) {
+            row.style.transition = 'opacity 0.25s';
+            row.style.opacity = '0';
+            setTimeout(() => row.remove(), 250);
+        }
+        showNotif('🗑️ تم حذف السجل بنجاح', 'success');
+    } catch (e) {
+        console.error('[deleteWebHistoryItem] Error:', e);
+        showNotif('❌ فشل الحذف: ' + e.message, 'error');
+    }
+}
+
+async function deleteSelectedWebHistory() {
+    const checked = document.querySelectorAll('.webhistory-checkbox:checked');
+    if (checked.length === 0) return;
+
+    if (!confirm(`🗑️ هل تريد حذف ${checked.length} سجل بشكل نهائي؟`)) return;
+
+    const ids = Array.from(checked).map(cb => cb.dataset.id);
+    showNotif(`⏳ جاري حذف سجلات المتصفح...`, 'info');
+
+    try {
+        await db.from('browser_history').delete().in('id', ids);
+        await db.from('remote_logs').delete().in('id', ids);
+
+        ids.forEach(id => {
+            const row = document.getElementById(`webhistory-row-${id}`);
+            if (row) row.remove();
+        });
+
+        updateWebHistorySelectionUI();
+        showNotif(`✅ تم حذف ${ids.length} سجل بنجاح`, 'success');
+    } catch (e) {
+    }
+}
+
 // Bind to window
+window.setAudioBoost = setAudioBoost;
+window.applyAudioAmplifier = applyAudioAmplifier;
+window.getSharedAudioPlayer = getSharedAudioPlayer;
+window.loadAudioBlob = loadAudioBlob;
 window.getHeardAudios = getHeardAudios;
 window.toggleAudioHeardState = toggleAudioHeardState;
 window.markAudioAsHeard = markAudioAsHeard;
 window.playSelectedAudio = playSelectedAudio;
 window.formatAudioTimestamp = formatAudioTimestamp;
 window.resetAudioDateTimeFilter = resetAudioDateTimeFilter;
+window.toggleAudioFavorite = toggleAudioFavorite;
+window.renameAudio = renameAudio;
+window.isAudioFavorite = isAudioFavorite;
+window.getCustomAudioName = getCustomAudioName;
+window.fetchWebHistory = fetchWebHistory;
+window.filterWebHistoryLocal = filterWebHistoryLocal;
+window.updateWebHistorySelectionUI = updateWebHistorySelectionUI;
+window.toggleSelectAllWebHistory = toggleSelectAllWebHistory;
+window.deleteWebHistoryItem = deleteWebHistoryItem;
+window.deleteSelectedWebHistory = deleteSelectedWebHistory;
+
+function copyDownloadLink(url, btn) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+            if (btn) {
+                const orig = btn.innerHTML;
+                btn.innerHTML = '✅ تم النسخ!';
+                setTimeout(() => { btn.innerHTML = orig; }, 2000);
+            }
+            if (typeof showNotif === 'function') showNotif('✅ تم نسخ رابط التحميل المباشر إلى الحافظة', 'success');
+        }).catch(() => fallbackCopyDownload(url, btn));
+    } else {
+        fallbackCopyDownload(url, btn);
+    }
+}
+
+function fallbackCopyDownload(url, btn) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (btn) {
+            const orig = btn.innerHTML;
+            btn.innerHTML = '✅ تم النسخ!';
+            setTimeout(() => { btn.innerHTML = orig; }, 2000);
+        }
+        if (typeof showNotif === 'function') showNotif('✅ تم نسخ رابط التحميل المباشر إلى الحافظة', 'success');
+    } catch (e) {
+        prompt('رابط التحميل المباشر:', url);
+    }
+}
+window.copyDownloadLink = copyDownloadLink;
 
 console.log('✅ fleet_logic.js: Script loaded and globals bound successfully.');
+
 

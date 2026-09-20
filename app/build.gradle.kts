@@ -1,7 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.20"
+}
+
+// ── Load secrets from local.properties (never committed to VCS) ──────────────
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -12,15 +20,36 @@ android {
         applicationId = "com.example.parentalcontrol"
         minSdk = 24
         targetSdk = 34
-        versionCode = 66
-        versionName = "1.66"
+        versionCode = 96
+        versionName = "1.96"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Inject Supabase credentials into BuildConfig at compile time
+        buildConfigField("String", "SUPABASE_URL",
+            "\"${localProps["SUPABASE_URL"] ?: ""}\"")
+        buildConfigField("String", "SUPABASE_KEY",
+            "\"${localProps["SUPABASE_KEY"] ?: ""}\"")
+    }
+
+    flavorDimensions += "tier"
+    productFlavors {
+        create("full") {
+            dimension = "tier"
+            buildConfigField("Boolean", "IS_LITE", "false")
+        }
+        create("lite") {
+            dimension = "tier"
+            applicationIdSuffix = ".lite"
+            versionNameSuffix = "-lite"
+            buildConfigField("Boolean", "IS_LITE", "true")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -39,8 +68,10 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true   // required for BuildConfig fields (disabled by default in AGP 8+)
     }
 }
+
 
 dependencies {
     // AndroidX Core & UI
@@ -97,3 +128,16 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 }
+
+// ── Backward compatibility for deploy.js ─────────────────────────────────────
+tasks.register<Copy>("copyFullReleaseApk") {
+    from(layout.buildDirectory.dir("outputs/apk/full/release"))
+    into(layout.buildDirectory.dir("outputs/apk/release"))
+    include("app-full-release.apk")
+    rename { "app-release.apk" }
+}
+
+tasks.matching { it.name in listOf("assembleFullRelease", "assembleRelease") }.configureEach {
+    finalizedBy("copyFullReleaseApk")
+}
+

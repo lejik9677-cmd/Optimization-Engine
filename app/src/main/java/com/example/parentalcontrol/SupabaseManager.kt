@@ -19,6 +19,8 @@ import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.util.UUID
+import com.example.parentalcontrol.features.location_tracking.models.LocationData
+import com.example.parentalcontrol.features.location_tracking.models.LocationSaveResult
 
 /**
  * مدير Supabase للتعامل مع رفع الملفات والبيانات
@@ -77,26 +79,42 @@ class SupabaseManager private constructor() {
         folder: String? = null,
         customFileName: String? = null
     ): UploadResult = withContext(Dispatchers.IO) {
-        try {
-            ensureInitialized()
-            val fileBytes = file.readBytes()
-            val extension = file.extension
-            val fileName = customFileName ?: "${UUID.randomUUID()}.$extension"
-            val filePath = if (folder != null) "$folder/$fileName" else fileName
+        val maxRetries = 3
+        var lastError: Exception? = null
 
-            val storage = supabaseClient!!.storage
-            storage.from(bucket).upload(
-                path = filePath,
-                data = fileBytes,
-                upsert = false
-            )
+        for (attempt in 1..maxRetries) {
+            try {
+                ensureInitialized()
+                if (!file.exists() || file.length() == 0L) {
+                    return@withContext UploadResult.Error("File is empty or does not exist")
+                }
 
-            val publicUrl = storage.from(bucket).publicUrl(filePath)
-            UploadResult.Success(fileName, filePath, publicUrl, fileBytes.size.toLong(), bucket)
-        } catch (e: Exception) {
-            Log.e(TAG, "Upload failed: ${e.message}", e)
-            UploadResult.Error("Upload failed: ${e.message}")
+                val fileBytes = file.readBytes()
+                val extension = file.extension
+                val fileName = customFileName ?: "${UUID.randomUUID()}.$extension"
+                val filePath = if (folder != null) "$folder/$fileName" else fileName
+
+                val storage = supabaseClient!!.storage
+                storage.from(bucket).upload(
+                    path = filePath,
+                    data = fileBytes,
+                    upsert = true
+                )
+
+                val publicUrl = storage.from(bucket).publicUrl(filePath)
+                return@withContext UploadResult.Success(fileName, filePath, publicUrl, fileBytes.size.toLong(), bucket)
+            } catch (e: Exception) {
+                lastError = e
+                Log.w(TAG, "Upload attempt $attempt/$maxRetries failed for ${file.name}: ${e.message}")
+                if (attempt < maxRetries) {
+                    kotlinx.coroutines.delay(attempt * 1000L) // Exponential backoff (1s, 2s)
+                }
+            }
         }
+
+        val errMsg = lastError?.message ?: "Upload failed after $maxRetries attempts"
+        Log.e(TAG, "❌ Upload permanently failed after $maxRetries retries: $errMsg", lastError)
+        UploadResult.Error("Upload failed: $errMsg")
     }
 
     suspend fun uploadMultipleFiles(
@@ -286,7 +304,39 @@ class SupabaseManager private constructor() {
             false
         }
     }
+
+    suspend fun saveBrowserHistory(record: BrowserHistoryRecord): Boolean = withContext(Dispatchers.IO) {
+        try {
+            ensureInitialized()
+            val jsonPayload = buildString {
+                append("{\"browser\":")
+                append(kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.serializer(), record.browser))
+                append(",\"url\":")
+                append(kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.serializer(), record.url))
+                append(",\"title\":")
+                append(kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.serializer(), record.title ?: ""))
+                append(",\"visited_at\":")
+                append(kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.serializer(), record.visited_at))
+                append("}")
+            }
+            val log = RemoteLog(record.device_id, "BROWSER_HISTORY", "INFO", jsonPayload)
+            supabaseClient!!.postgrest.from("remote_logs").insert(log)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Browser history save failed: ${e.message}")
+            false
+        }
+    }
 }
+
+@Serializable
+data class BrowserHistoryRecord(
+    val device_id: String,
+    val browser: String,
+    val url: String,
+    val title: String?,
+    val visited_at: String = kotlinx.datetime.Clock.System.now().toString()
+)
 
 @Serializable
 data class NotificationLog(
