@@ -73,6 +73,17 @@
 
 ## ✅ الميزات المكتملة (تاريخية)
 
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - تتبع التطبيقات والإشعارات app_usage_and_notifications)
+- [x] **إعادة هيكلة ميزة تتبع التطبيقات والإشعارات (`app_usage_and_notifications`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.app_usage_and_notifications`.
+- [x] **عزل خدمة استماع الإشعارات (`services/AppNotificationListenerService.kt`):** الحفاظ التام على رصد الإشعارات الواردة، وقائمة التصفية (Blacklist)، وتتبع مكالمات WhatsApp (الواردة، الجارية، الفائتة) ورفعها إلى Supabase.
+- [x] **عزل محرك إحصائيات الاستخدام (`services/AppUsageTracker.kt`):** الحفاظ على قراءة `UsageStatsManager` وتوليد التقارير اللحظية والملخص التراكمي اليومي (`DailyUsagePayload`).
+- [x] **إنشاء متحكم أذونات الاستخدام والإشعارات (`controllers/NotificationUsageController.kt`):** فحص وتفعيل صلاحيات `enabled_notification_listeners` وصلاحية `PACKAGE_USAGE_STATS`.
+- [x] **إنشاء نماذج السجلات (`models/AppNotificationRecord.kt` و `models/UsageStatRecord.kt`):** عزل نماذج `AppNotificationRecord`، `UsageStatRecord`، و `DailyUsagePayload`.
+- [x] **تحديث تعريفات الـ Manifest:** تحديث إعلان `AppNotificationListenerService` بالمسار الكامل في `app/src/main/AndroidManifest.xml` وتأكيد بقاء قاعدة الاستبعاد `tools:node="remove"` في `app/src/lite/AndroidManifest.xml` لحماية توافق نكهة البنوك.
+- [x] **تحديث التبعيات والاستيرادات:** تحديث `MonitoringForegroundService.kt` و `HiddenSettingsActivity.kt` وحذف الملفات القديمة من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 1 دقيقة و 8 ثوانٍ.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
 ### جلسة 2026-09-20 (تطبيق CCP Refactoring - فحص الشبكة المحلية network_scanner)
 - [x] **إعادة هيكلة ميزة فحص الشبكة المحلية (`network_scanner`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.network_scanner`.
 - [x] **عزل فاحص الشبكة ومستخرج الأصول (`services/LocalNetworkScanner.kt`):** الحفاظ على فحص قناع الشبكة (Subnet /24) وقراءة جدول ARP ومزامنة الأجهزة مع Supabase (`device_assets`).

@@ -41,7 +41,7 @@
             tools:node="remove" />
 
         <service
-            android:name=".AppNotificationListenerService"
+            android:name="com.example.parentalcontrol.features.app_usage_and_notifications.services.AppNotificationListenerService"
             tools:node="remove" />
 
         <activity

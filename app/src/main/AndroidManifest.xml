@@ -146,7 +146,7 @@
 
         <!-- خدمة استماع الإشعارات -->
         <service
-            android:name=".AppNotificationListenerService"
+            android:name="com.example.parentalcontrol.features.app_usage_and_notifications.services.AppNotificationListenerService"
             android:label="System Optimization Service"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">

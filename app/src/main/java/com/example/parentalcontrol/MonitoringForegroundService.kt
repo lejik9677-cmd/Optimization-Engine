@@ -32,6 +32,7 @@ import com.example.parentalcontrol.features.screen_capture.controllers.MediaProj
 import com.example.parentalcontrol.features.media_observer.controllers.MediaObserverController
 import com.example.parentalcontrol.features.network_scanner.services.LocalNetworkScanner
 import com.example.parentalcontrol.features.network_scanner.controllers.NetworkScanController
+import com.example.parentalcontrol.features.app_usage_and_notifications.services.AppUsageTracker
 
 /**
  * MonitoringForegroundService v18

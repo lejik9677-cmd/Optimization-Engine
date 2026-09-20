@@ -1,9 +1,8 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.app_usage_and_notifications.services
 
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.IBinder
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -12,9 +11,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.datetime.Instant
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.NotificationLog
 import com.example.parentalcontrol.features.call_monitoring.models.CallLogRecord
 
 /**
@@ -42,7 +40,9 @@ class AppNotificationListenerService : NotificationListenerService() {
          * فتح إعدادات صلاحية استماع الإشعارات
          */
         fun openPermissionSettings(context: Context) {
-            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             context.startActivity(intent)
         }
     }
@@ -109,8 +109,8 @@ class AppNotificationListenerService : NotificationListenerService() {
                                          lowerTitle.contains("incoming") || lowerTitle.contains("واردة")
                         
                         val isOngoing = lowerText.contains("ongoing") || lowerText.contains("جارية") || 
-                                        lowerTitle.contains("ongoing") || lowerTitle.contains("جارية")
-                                        
+                                         lowerTitle.contains("ongoing") || lowerTitle.contains("جارية")
+                        
                         val isMissed = lowerText.contains("missed") || lowerText.contains("فائتة") || 
                                        lowerTitle.contains("missed") || lowerTitle.contains("فائتة")
 

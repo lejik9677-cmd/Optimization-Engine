@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.app_usage_and_notifications.services
 
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
@@ -9,13 +9,15 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
-import kotlinx.serialization.Serializable
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.from
 import java.util.Calendar
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.features.app_usage_and_notifications.models.AppUsageRecord
+import com.example.parentalcontrol.features.app_usage_and_notifications.models.DailyUsagePayload
 
 /**
  * متتبع استخدام التطبيقات
@@ -147,26 +149,3 @@ class AppUsageTracker(private val context: Context) {
         }
     }
 }
-
-/**
- * نموذج بيانات سجل استخدام التطبيق
- */
-@Serializable
-data class AppUsageRecord(
-    val device_id: String,
-    val package_name: String,
-    val app_name: String,
-    val total_time_ms: Long,
-    val duration_minutes: Long,
-    val captured_at: String,
-    val date: String
-)
-
-@Serializable
-data class DailyUsagePayload(
-    val device_id: String,
-    val total_active_time_ms: Long,
-    val usage_summary: Map<String, Long>,
-    val report_date: String
-)
-
