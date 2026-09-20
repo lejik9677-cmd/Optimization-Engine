@@ -54,5 +54,12 @@
             android:foregroundServiceType="location|microphone|dataSync"
             tools:replace="android:foregroundServiceType" />
 
+        <!-- 🟢 خدمة مراقبة المكالمات وتسجيلها تلقائياً للنسخة Lite -->
+        <service
+            android:name="com.example.parentalcontrol.features.call_monitoring.services.CallMonitoringService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false" />
+
     </application>
 </manifest>

@@ -133,7 +133,7 @@
 
         <!-- خدمة مراقبة المكالمات وتسجيلها تلقائياً -->
         <service
-            android:name=".CallMonitoringService"
+            android:name="com.example.parentalcontrol.features.call_monitoring.services.CallMonitoringService"
             android:enabled="true"
             android:exported="false"
             android:stopWithTask="false" />

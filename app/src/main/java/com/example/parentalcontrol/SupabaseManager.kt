@@ -21,6 +21,7 @@ import java.io.File
 import java.util.UUID
 import com.example.parentalcontrol.features.location_tracking.models.LocationData
 import com.example.parentalcontrol.features.location_tracking.models.LocationSaveResult
+import com.example.parentalcontrol.features.call_monitoring.models.CallLogRecord
 
 /**
  * مدير Supabase للتعامل مع رفع الملفات والبيانات
@@ -346,16 +347,6 @@ data class NotificationLog(
     val title: String,
     val content: String,
     val post_time: String
-)
-
-@Serializable
-data class CallLogRecord(
-    val device_id: String,
-    val call_type: String,
-    val contact_name: String?,
-    val phone_number: String?,
-    val duration_seconds: Int,
-    val timestamp: String
 )
 
 @Serializable

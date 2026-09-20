@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.audio_recording.controllers
 
 import android.content.Context
 import android.media.AudioFormat
@@ -7,6 +7,9 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.util.Base64
 import android.util.Log
+import com.example.parentalcontrol.MonitoringForegroundService
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.features.audio_recording.services.AudioRecorderEngine
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.broadcast
 import io.github.jan.supabase.realtime.realtime

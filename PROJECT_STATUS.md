@@ -73,10 +73,13 @@
 
 ## ✅ الميزات المكتملة (تاريخية)
 
-### جلسة 2026-09-20 (تطبيق CCP Refactoring - ميزة التتبع الجغرافي المعزولة)
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - التتبع الجغرافي، المكالمات، وتسجيل الصوت)
 - [x] **إعادة هيكلة ميزة التتبع الجغرافي (`location_tracking`):** نقل `LocationData` إلى `models/`، و `GpsTracker` إلى `services/`، و `LocationTrackerManager` إلى `controllers/`.
-- [x] **تحديث الاستيرادات والمسارات:** تحديث مسارات الحزم وجميع الاستيرادات في `RealtimeCommandManager.kt` و `MonitoringForegroundService.kt` و `SupabaseManager.kt` و `LocationConsentActivity.kt`.
-- [x] **تأكيد سلامة التجميع:** نجاح فحص `gradlew assembleFullRelease --dry-run` ونجاح تجميع Kotlin الفعلي `gradlew compileFullReleaseKotlin` (BUILD SUCCESSFUL).
+- [x] **إعادة هيكلة ميزة مراقبة المكالمات (`call_monitoring`):** نقل `CallLogRecord` و `CallState` إلى `models/`، و `CallMonitoringService` و `CallLogTracker` إلى `services/`، وإضافة `CallController` في `controllers/`.
+- [x] **إعادة هيكلة ميزة تسجيل الصوت وحراسة الميكروفون (`audio_recording`):** نقل `AudioRecorderEngine` إلى `services/`، و `MicManager` إلى `controllers/`، وعزل نماذج الصوت (`MicState`, `AudioChunk`, `AudioEncodingConfig`) داخل `models/`.
+- [x] **حماية إعدادات الصوت والبث:** الحفاظ الصارم على ضغط الصوت (16kHz / 32kbps Mono) ومهلة الأمان للبث الحي (5 دقائق) وحراسة تعارض المايك (Mic Conflict Guard).
+- [x] **تحديث تعريف الخدمة والاستيرادات:** تسجيل مسار `CallMonitoringService` في المانيفست (`main` و `lite`)، وتحديث الاستيرادات في `MonitoringForegroundService.kt` و `RealtimeCommandManager.kt` و `AppAccessibilityService.kt` و `SupabaseManager.kt`.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع كلا النكهتين عبر `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` (BUILD SUCCESSFUL) بـ 0 أخطاء.
 - [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
 
 ### جلسة 2026-09-09 (الإصدار v96 — APK جديد + إصلاحات لوحة التحكم)
