@@ -73,6 +73,34 @@
 
 ## ✅ الميزات المكتملة (تاريخية)
 
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - فحص الشبكة المحلية network_scanner)
+- [x] **إعادة هيكلة ميزة فحص الشبكة المحلية (`network_scanner`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.network_scanner`.
+- [x] **عزل فاحص الشبكة ومستخرج الأصول (`services/LocalNetworkScanner.kt`):** الحفاظ على فحص قناع الشبكة (Subnet /24) وقراءة جدول ARP ومزامنة الأجهزة مع Supabase (`device_assets`).
+- [x] **إنشاء متحكم فحص الشبكة (`controllers/NetworkScanController.kt`):** إدارة جدولة حلقة الفحص الدوري (كل 5 دقائق) والإيقاف الآمن والفحص اليدوي.
+- [x] **إنشاء نماذج أجهزة الشبكة (`models/DiscoveredDevice.kt`):** كائنات `DiscoveredDevice` (IP, MAC, Vendor, Hostname) و `DeviceAsset` المتوافقة مع Supabase.
+- [x] **تحديث الاستيرادات والخدمة:** تحديث `MonitoringForegroundService.kt` لاستدعاء الفاحص عبر `NetworkScanController` مع إيقاف الحلقة بأمان عند `onDestroy()`، وحذف الملف القديم من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع كلا النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 37 ثانية.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - مراقبة الوسائط والصور media_observer)
+- [x] **إعادة هيكلة ميزة مراقبة الوسائط (`media_observer`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.media_observer`.
+- [x] **عزل محرك المراقبة والضغط (`services/MediaObserver.kt`):** الحفاظ التام على مراقبة `MediaStore` عبر `ContentObserver` وضغط الصور لجودة متوازنة (<180KB) ورفعها تلقائياً مع منع التكرار (Debounce 2s).
+- [x] **إنشاء متحكم الوسائط (`controllers/MediaObserverController.kt`):** إدارة عمليات التسجيل والإلغاء وتنسيق الرصد بأمان.
+- [x] **إنشاء نموذج عنصر الوسائط (`models/MediaItem.kt`):** عزل بيانات الصورة (المعرف، الـ URI، المسار، الاسم، وتاريخ الإضافة).
+- [x] **تحديث الاستيرادات والخدمة:** تحديث `MonitoringForegroundService.kt` لاستدعاء المراقب عبر `MediaObserverController` وحذف الملف القديم من الجذر.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء في 38 ثانية.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - التقاط وبث الشاشة screen_capture)
+- [x] **إعادة هيكلة ميزة التقاط وبث الشاشة (`screen_capture`):** إنشاء الحزمة المستقلة `com.example.parentalcontrol.features.screen_capture`.
+- [x] **عزل محرك الالتقاط (`services/ScreenCaptureEngine.kt`):** الحفاظ التام على منطق "Pulse Mode" وتخفيف النقطة الخضراء في أندرويد 14 لأقل من ثانية، مع معالجة استعادة الإذن التلقائية (`requestProjectionReacquisition`).
+- [x] **عزل نشاط طلب الإذن (`controllers/MediaProjectionRequestActivity.kt`):** الحفاظ على وضع الاستحواذ التلقائي (`EXTRA_AUTO`) وتمرير الإذن إلى الـ Foreground Service لتوافق أندرويد 14.
+- [x] **إنشاء نماذج بيانات الشاشة والإطارات (`models/CaptureConfig.kt`):** كائنات بيانات موحدة لإعدادات الجودة ومحاولات الاستحواذ وقائمة التطبيقات المستهدفة ونموذج `ScreenFrame`.
+- [x] **تحديث تعريفات الـ Manifest:** تسجيل مسار الحزمة الكامل لـ `MediaProjectionRequestActivity` في `app/src/main/AndroidManifest.xml` وتأكيد بقاء قاعدة الاستبعاد `tools:node="remove"` في `app/src/lite/AndroidManifest.xml` لحماية توافق نكهة البنوك.
+- [x] **تحديث التبعيات والاستيرادات:** تحديث `MainActivity.kt` و `MonitoringForegroundService.kt` و `RealtimeCommandManager.kt` دون أدنى مساس بالمنطق التشغيلي.
+- [x] **تأكيد سلامة التجميع المزدوج:** نجاح أمر البناء والتجميع لكلا النكهتين `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` بـ `BUILD SUCCESSFUL` و 0 أخطاء.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
 ### جلسة 2026-09-20 (تطبيق CCP Refactoring - التتبع الجغرافي، المكالمات، وتسجيل الصوت)
 - [x] **إعادة هيكلة ميزة التتبع الجغرافي (`location_tracking`):** نقل `LocationData` إلى `models/`، و `GpsTracker` إلى `services/`، و `LocationTrackerManager` إلى `controllers/`.
 - [x] **إعادة هيكلة ميزة مراقبة المكالمات (`call_monitoring`):** نقل `CallLogRecord` و `CallState` إلى `models/`، و `CallMonitoringService` و `CallLogTracker` إلى `services/`، وإضافة `CallController` في `controllers/`.

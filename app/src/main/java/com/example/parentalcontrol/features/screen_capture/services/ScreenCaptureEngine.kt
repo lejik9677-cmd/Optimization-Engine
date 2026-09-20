@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.screen_capture.services
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -20,6 +20,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.app.usage.UsageStatsManager
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.UploadResult
+import com.example.parentalcontrol.MonitoringForegroundService
+import com.example.parentalcontrol.features.screen_capture.models.CaptureConfig
 
 /**
  * ScreenCaptureEngine v16 — Pulse Mode
@@ -38,20 +42,7 @@ class ScreenCaptureEngine(private val context: Context) {
         private const val TAG = "ScreenCaptureEngine"
         private const val BUCKET = "monitoring_data"
 
-        private val TARGET_APPS = setOf(
-            "com.whatsapp",
-            "com.facebook.orca",
-            "com.instagram.android",
-            "com.snapchat.android",
-            "com.twitter.android",
-            "com.google.android.youtube",
-            "com.zhiliaoapp.musically",
-            "org.telegram.messenger",
-            "com.android.chrome",
-            "com.facebook.katana",
-            "com.tiktok.android",
-            "com.discord"
-        )
+        private val TARGET_APPS = CaptureConfig.TARGET_APPS
     }
 
     /**

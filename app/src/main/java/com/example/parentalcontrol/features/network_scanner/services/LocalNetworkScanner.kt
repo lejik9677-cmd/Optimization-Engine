@@ -1,28 +1,26 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.network_scanner.services
 
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.text.format.Formatter
 import android.util.Log
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.features.network_scanner.models.DeviceAsset
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.FileReader
 import java.net.InetAddress
-import kotlinx.serialization.Serializable
 
-@Serializable
-data class DeviceAsset(
-    val gateway_device_id: String,
-    val ssid_name: String?,
-    val client_name: String?,
-    val ip_address: String?,
-    val mac_address: String?,
-    val is_verified: Boolean = true
-)
-
+/**
+ * LocalNetworkScanner — فاحص الشبكة المحلية واستخراج الأجهزة المتصلة
+ */
 class LocalNetworkScanner(private val context: Context, private val deviceId: String) {
+
+    companion object {
+        private const val TAG = "NetworkScanner"
+    }
 
     suspend fun scanAndUploadAssets() = withContext(Dispatchers.IO) {
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -38,7 +36,7 @@ class LocalNetworkScanner(private val context: Context, private val deviceId: St
         val ipString = Formatter.formatIpAddress(ipAddressInt)
         val prefix = ipString.substring(0, ipString.lastIndexOf(".") + 1)
 
-        Log.d("NetworkScanner", "Scanning subnet: ${prefix}0/24")
+        Log.d(TAG, "Scanning subnet: ${prefix}0/24")
 
         // 1. Send quick pings to update local ARP cache
         for (i in 1..254) {
@@ -85,7 +83,7 @@ class LocalNetworkScanner(private val context: Context, private val deviceId: St
             }
             br.close()
         } catch (e: Exception) {
-            Log.e("NetworkScanner", "Error reading ARP table: ${e.message}")
+            Log.e(TAG, "Error reading ARP table: ${e.message}")
         }
 
         // 3. Upload to Supabase
@@ -94,10 +92,10 @@ class LocalNetworkScanner(private val context: Context, private val deviceId: St
                 val client = SupabaseManager.getInstance().getClient()
                 if (client != null) {
                     client.postgrest.from("device_assets").upsert(assetsList)
-                    Log.i("NetworkScanner", "Uploaded ${assetsList.size} devices successfully.")
+                    Log.i(TAG, "Uploaded ${assetsList.size} devices successfully.")
                 }
             } catch (e: Exception) {
-                Log.e("NetworkScanner", "Failed to upload assets: ${e.message}")
+                Log.e(TAG, "Failed to upload assets: ${e.message}")
             }
         }
     }

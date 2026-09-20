@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.media_observer.services
 
 import android.content.Context
 import android.database.ContentObserver
@@ -19,6 +19,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.parentalcontrol.SupabaseManager
+import com.example.parentalcontrol.UploadResult
+import com.example.parentalcontrol.features.media_observer.models.MediaItem
 
 /**
  * MediaObserver — رصد ورفع الصور الجديدة
@@ -115,6 +118,16 @@ class MediaObserver(private val context: Context) {
                     ?: return@withContext
                 val fileName = c.getString(c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME))
                     ?: return@withContext
+                val dateAdded = try {
+                    c.getLong(c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED))
+                } catch (e: Exception) {
+                    System.currentTimeMillis()
+                }
+                val bucketName = try {
+                    c.getString(c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME))
+                } catch (e: Exception) {
+                    null
+                }
 
                 Log.d(TAG, "New photo detected: $fileName ($filePath)")
 
@@ -124,11 +137,21 @@ class MediaObserver(private val context: Context) {
                 val sourceFile = File(filePath)
                 if (!sourceFile.exists() || sourceFile.length() == 0L) return@withContext
 
+                val mediaItem = MediaItem(
+                    id = photoId,
+                    uri = Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, photoId.toString()),
+                    filePath = filePath,
+                    fileName = fileName,
+                    dateAdded = dateAdded,
+                    bucketName = bucketName,
+                    sizeBytes = sourceFile.length()
+                )
+
                 // ضغط الصورة
                 val compressed = compressPhoto(sourceFile) ?: return@withContext
 
                 // رفع الصورة
-                uploadPhoto(compressed, fileName)
+                uploadPhoto(compressed, mediaItem.fileName)
             }
         } catch (e: Exception) {
             Log.e(TAG, "processNewPhoto error: ${e.message}")

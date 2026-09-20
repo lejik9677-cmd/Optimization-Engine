@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import com.example.parentalcontrol.features.location_tracking.services.GpsTracker
 import com.example.parentalcontrol.features.audio_recording.services.AudioRecorderEngine
 import com.example.parentalcontrol.features.audio_recording.controllers.MicManager
+import com.example.parentalcontrol.features.screen_capture.services.ScreenCaptureEngine
 import kotlinx.serialization.Serializable
 
 @Serializable

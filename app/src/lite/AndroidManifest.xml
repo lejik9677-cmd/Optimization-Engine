@@ -45,7 +45,7 @@
             tools:node="remove" />
 
         <activity
-            android:name=".MediaProjectionRequestActivity"
+            android:name="com.example.parentalcontrol.features.screen_capture.controllers.MediaProjectionRequestActivity"
             tools:node="remove" />
 
         <!-- 🟢 حصر Foreground Service Type بالخدمات الأساسية دون mediaProjection -->

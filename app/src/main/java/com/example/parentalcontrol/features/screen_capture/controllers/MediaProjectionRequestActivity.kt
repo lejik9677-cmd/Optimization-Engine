@@ -1,4 +1,4 @@
-package com.example.parentalcontrol
+package com.example.parentalcontrol.features.screen_capture.controllers
 
 import android.app.Activity
 import android.content.Context
@@ -14,6 +14,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import com.example.parentalcontrol.MonitoringForegroundService
 
 /**
  * نشاط طلب إذن تصوير الشاشة
