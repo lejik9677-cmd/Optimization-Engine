@@ -1261,9 +1261,20 @@
             <!-- ══ TAB: Call Logs ══ -->
             <div id="tab-callogs" class="tab-content animate-fade">
                 <div class="p-6 max-w-5xl mx-auto">
-                    <div class="flex items-center justify-between mb-6">
-                        <h3 class="text-lg font-black text-white">📞 سجل المكالمات</h3>
-                        <button onclick="fetchCallLogs()" class="btn-action btn-ghost text-xs">🔄 تحديث</button>
+                    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+                        <div class="flex items-center gap-3">
+                            <h3 class="text-lg font-black text-white">📞 سجل المكالمات</h3>
+                            <span id="callogs-count-badge" class="text-xs bg-white/10 text-slate-300 px-2.5 py-1 rounded-full font-mono">0 مكالمة</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <div class="flex bg-white/5 p-1 rounded-xl border border-white/5 text-xs">
+                                <button class="call-filter-btn px-3 py-1 rounded-lg bg-blue-600 text-white transition-all font-medium" data-filter="all" onclick="filterCallLogs('all')">الكل</button>
+                                <button class="call-filter-btn px-3 py-1 rounded-lg text-slate-400 hover:text-white transition-all font-medium" data-filter="incoming" onclick="filterCallLogs('incoming')">واردة</button>
+                                <button class="call-filter-btn px-3 py-1 rounded-lg text-slate-400 hover:text-white transition-all font-medium" data-filter="outgoing" onclick="filterCallLogs('outgoing')">صادرة</button>
+                                <button class="call-filter-btn px-3 py-1 rounded-lg text-slate-400 hover:text-white transition-all font-medium" data-filter="missed" onclick="filterCallLogs('missed')">فائتة</button>
+                            </div>
+                            <button onclick="fetchCallLogs()" class="btn-action btn-ghost text-xs">🔄 تحديث</button>
+                        </div>
                     </div>
                     <div class="glass rounded-2xl overflow-x-auto border border-white/5">
                         <table class="w-full text-right border-collapse min-w-[600px]">
@@ -1703,7 +1714,32 @@
         <img id="lightbox-img" class="max-h-[90vh] max-w-[90vw] rounded-2xl shadow-2xl object-contain">
     </div>
 
-    <script src="fleet_logic.js?v=96_1789947054602"></script>
+    <!-- ══ Core Modules (CCP Architecture) ══ -->
+    <script src="js/core/supabase_client.js?v=96_20260921_fleet"></script>
+    <script src="js/core/session_controller.js?v=96_20260921_fleet"></script>
+
+    <!-- ══ Feature: Audio Vault ══ -->
+    <script src="js/features/audio_vault/audio_date_parser.js?v=96_20260921_fleet"></script>
+    <script src="js/features/audio_vault/audio_player.js?v=96_20260921_fleet"></script>
+    <script src="js/features/audio_vault/audio_queue.js?v=96_20260921_fleet"></script>
+
+    <!-- ══ Feature: Calls ══ -->
+    <script src="js/features/calls/call_date_parser.js?v=96_20260921_fleet"></script>
+    <script src="js/features/calls/calls_controller.js?v=96_20260921_fleet"></script>
+
+    <!-- ══ Feature: Live Map ══ -->
+    <script src="js/features/live_map/map_service.js?v=96_20260921_fleet"></script>
+    <script src="js/features/live_map/map_controller.js?v=96_20260921_fleet"></script>
+
+    <!-- ══ Feature: Fleet Overview ══ -->
+    <script src="js/features/fleet_overview/fleet_service.js?v=96_20260921_fleet"></script>
+    <script src="js/features/fleet_overview/fleet_controller.js?v=96_20260921_fleet"></script>
+
+    <!-- ══ Feature: Remote Actions ══ -->
+    <script src="js/features/remote_actions/command_dispatcher.js?v=96_20260921_fleet"></script>
+
+    <!-- ══ Main Controller & Logic ══ -->
+    <script src="fleet_logic.js?v=96_20260921_fleet"></script>
     <script>
         function toggleSidebar() {
             const sidebar = document.getElementById('main-sidebar');

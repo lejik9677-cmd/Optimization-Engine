@@ -9,20 +9,9 @@ console.log('🚀 fleet_logic.js: Script started loading...');
 'use strict';
 
 // ═══════════════════════════════════════════════════════════
-//  CONFIG
+//  CONFIG (Imported from js/core/supabase_client.js)
 // ═══════════════════════════════════════════════════════════
-const SUPABASE_URL = 'https://ahiqnmheiqigrdbishwe.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFoaXFubWhlaXFpZ3JkYmlzaHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU0NTMyNDgsImV4cCI6MjEwMTAyOTI0OH0.qnX22vNr-qMqCOOaUp6yQ9qguvv8Aen6KjALjFSTlPg';
-
-const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false
-    }
-});
-
-const ONLINE_THRESHOLD_MINUTES = 30; // رُفعت إلى 30 دقيقة لاستيعاب قيود توفير البطارية والخلفية في أندرويد (ColorOS)
+// SUPABASE_URL, SUPABASE_KEY, db, and ONLINE_THRESHOLD_MINUTES are provided globally by supabase_client.js
 
 // ═══════════════════════════════════════════════════════════
 //  STATE
@@ -43,39 +32,11 @@ window.triggerMic = function() {
 };
 let currentTab       = 'reports';
 let reportFilter     = 'all';
-let mapInstance      = null;
-let heatLayer        = null;
-let routeLayer       = null;
-let routeMarkers     = [];
-let heatmapVisible   = false;
-let mapStyleIndex    = 0;
-let allLocations     = [];
-
-const MAP_STYLES = [
-    {
-        name: '🌍 خريطة الشوارع',
-        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-        attr: '© OpenStreetMap, © CARTO'
-    },
-    {
-        name: '🛰️ صور الأقمار',
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr: '© Esri, Maxar, Earthstar Geographics'
-    },
-    {
-        name: '🗺️ هجين (شوارع+صور)',
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-        attr: '© Esri, HERE, Garmin'
-    }
-];
+// Live Map state & layers are delegated to js/features/live_map/map_service.js
 let usageChartInst   = null;
 let autoRefreshTimer = null;
 let logsRealtimeSub  = null;
 let realtimeChannels = {};   // keyed by deviceId
-
-// ── Live Tracking State ───────────────────────────────────────────────────────
-let liveTrackingActive = false;
-let liveTrackingTimer  = null;
 
 // ── Live Mic State ────────────────────────────────────────────────────────────
 let micStreamChannel = null;
@@ -97,135 +58,20 @@ window.onunhandledrejection = (e) => {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-    checkSession();
-
-    // Supabase auth state listener — يحافظ على الجلسة تلقائياً
-    db.auth.onAuthStateChange((event, session) => {
-        console.log('[Auth] State changed:', event, !!session);
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            toggleDashboard(true);
-        } else if (event === 'SIGNED_OUT') {
-            toggleDashboard(false);
-        }
-    });
+    if (typeof checkSession === 'function') checkSession();
+    if (typeof initSessionListener === 'function') initSessionListener();
 });
 
 // ═══════════════════════════════════════════════════════════
-//  AUTH — SESSION MANAGEMENT
+//  AUTH — SESSION MANAGEMENT (Delegated to core/session_controller.js)
 // ═══════════════════════════════════════════════════════════
-async function checkSession() {
-    // Open dashboard directly for admin ease
-    toggleDashboard(true);
-}
-
-function toggleDashboard(isLoggedIn) {
-    const loginScreen = document.getElementById('loginScreen');
-    const dashboard   = document.getElementById('dashboard');
-
-    if (loginScreen) loginScreen.style.display = 'none';
-    if (dashboard)   dashboard.style.display   = 'flex';
-
-    loadDeviceList();
-    startAutoRefresh();
-    buildSettingsToggles();
-}
-
-async function handleLogin() {
-    toggleDashboard(true);
-}
-
-async function handleLogout() {
-    if (!confirm('هل تريد تسجيل الخروج؟')) return;
-    await db.auth.signOut();
-    toggleDashboard(false);
-}
 
 // ═══════════════════════════════════════════════════════════
-//  DEVICE LIST
+//  FLEET OVERVIEW (Delegated to js/features/fleet_overview/)
 // ═══════════════════════════════════════════════════════════
 async function loadDeviceList() {
-    try {
-        const { data: devices, error } = await db
-            .from('remote_settings')
-            .select('*')
-            .order('updated_at', { ascending: false });
-
-        if (error) throw error;
-
-        const list = document.getElementById('device-list');
-
-        if (!devices || devices.length === 0) {
-            list.innerHTML = `
-                <p class="px-4 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">الأجهزة المسجلة</p>
-                <div class="empty-state text-xs"><p>لا توجد أجهزة مسجلة بعد</p></div>`;
-            return;
-        }
-
-        // Fetch battery from last location
-        const locationPromises = devices.map(d =>
-            db.from('locations').select('battery_level, timestamp').eq('device_id', d.device_id)
-              .order('timestamp', { ascending: false }).limit(1).maybeSingle()
-        );
-        const locationResults = await Promise.all(locationPromises);
-
-        // Update stats
-        const onlineCount = devices.filter((d, i) => isOnline(locationResults[i]?.data?.timestamp || d.updated_at)).length;
-        document.getElementById('stat-devices').innerText = devices.length;
-        document.getElementById('stat-online').innerText = onlineCount;
-
-        // Update mobile device dropdown
-        const dropdown = document.getElementById('mobile-device-dropdown');
-        if (dropdown) {
-            dropdown.innerHTML = `<option value="">— اختر جهازاً (${devices.length}) —</option>`;
-            devices.forEach(device => {
-                const name = device.nickname || truncate(device.device_id, 14);
-                const opt = document.createElement('option');
-                opt.value = device.device_id;
-                opt.text = name;
-                opt.selected = (device.device_id === currentDeviceId);
-                dropdown.appendChild(opt);
-            });
-        }
-
-        list.innerHTML = `<p class="px-4 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">الأجهزة المسجلة</p>`;
-
-        devices.forEach((device, i) => {
-            const locData  = locationResults[i]?.data;
-            const battery  = locData?.battery_level ?? '--';
-            const lastSeen = locData?.timestamp || device.updated_at;
-            const online   = isOnline(lastSeen);
-            const name     = device.nickname || truncate(device.device_id, 14);
-            const model    = extractModel(device.device_info);
-
-            const item = document.createElement('div');
-            item.className = 'device-item' + (device.device_id === currentDeviceId ? ' active' : '');
-            item.dataset.id = device.device_id;
-            item.onclick = () => selectDevice(device.device_id, device);
-            item.innerHTML = `
-                <div class="status-dot ${online ? 'online' : 'offline'}"></div>
-                <div class="flex-1 min-w-0">
-                    <p class="text-sm font-bold text-slate-200 truncate">${name}</p>
-                    <p class="text-[10px] text-slate-500 truncate">${model}</p>
-                </div>
-                <div class="text-right flex-shrink-0">
-                    <div class="flex items-center gap-1 mb-0.5">
-                        <span class="text-[11px] font-bold ${batteryColor(battery)}">${battery !== '--' ? battery + '%' : '--'}</span>
-                    </div>
-                    <p class="text-[9px] text-slate-600">${formatRelativeTime(lastSeen)}</p>
-                </div>`;
-            list.appendChild(item);
-        });
-
-        // Fetch pending commands count
-        const { count } = await db.from('commands').select('*', { count: 'exact', head: true }).eq('status', 'PENDING');
-        document.getElementById('stat-pending').innerText = count || 0;
-
-    } catch (e) {
-        console.warn('[loadDeviceList] Database tables initializing:', e.message || e);
-        const list = document.getElementById('device-list');
-        if (list) {
-            list.innerHTML = `<div class="p-4 text-center text-xs text-slate-400">⚡ بانتظار اتصال أول جهاز أندرويد بالمشروع الجديد...</div>`;
-        }
+    if (typeof window.loadDeviceList === 'function' && window.loadDeviceList !== loadDeviceList) {
+        return window.loadDeviceList();
     }
 }
 
@@ -239,90 +85,11 @@ function cleanupAutoRecord() {
         console.warn('[cleanupAutoRecord] Error:', e);
     }
 }
+window.cleanupAutoRecord = cleanupAutoRecord;
 
-// ═══════════════════════════════════════════════════════════
-//  SELECT DEVICE
-// ═══════════════════════════════════════════════════════════
 async function selectDevice(deviceId, deviceData = null) {
-    cleanupAutoRecord();
-    if (!deviceId) {
-        currentDeviceId = null;
-        const nameEl = document.getElementById('current-device-name');
-        const idEl   = document.getElementById('current-device-id');
-        const modelEl= document.getElementById('device-model');
-        const verEl  = document.getElementById('reported-version');
-        if (nameEl) nameEl.innerText = 'اختر جهازاً من القائمة';
-        if (idEl)   idEl.innerText   = 'لم يُختر جهاز';
-        if (modelEl)modelEl.innerText= '--';
-        if (verEl)  verEl.classList.add('hidden');
-        document.querySelectorAll('.device-item').forEach(el => el.classList.remove('active'));
-        const dropdown = document.getElementById('mobile-device-dropdown');
-        if (dropdown) dropdown.value = '';
-        return;
-    }
-
-    currentDeviceId = deviceId;
-    isAudioPlayingGlobal = false; // Reset playback guard when switching device
-
-    try {
-        // Update sidebar active state
-        document.querySelectorAll('.device-item').forEach(el => {
-            el.classList.toggle('active', el.dataset.id === deviceId);
-        });
-
-        // Update mobile dropdown selection
-        const dropdown = document.getElementById('mobile-device-dropdown');
-        if (dropdown) {
-            dropdown.value = deviceId;
-        }
-
-        // Fetch full device data if not provided
-        if (!deviceData) {
-            const { data } = await db.from('remote_settings').select('*').eq('device_id', deviceId).maybeSingle();
-            deviceData = data;
-        }
-
-        // Update header
-        const name = deviceData?.nickname || 'جهاز غير مسمى';
-        const nameEl = document.getElementById('current-device-name');
-        const idEl   = document.getElementById('current-device-id');
-        const modelEl= document.getElementById('device-model');
-        const vEl    = document.getElementById('reported-version');
-
-        if (nameEl) nameEl.innerText = name;
-        if (idEl)   idEl.innerText   = truncate(deviceId, 22);
-        if (modelEl)modelEl.innerText= extractModel(deviceData?.device_info) || '--';
-
-        const vCode = deviceData?.current_version_code;
-        if (vEl) {
-            if (vCode) {
-                vEl.innerText = `v${vCode}`;
-                vEl.classList.remove('hidden');
-            } else {
-                vEl.classList.add('hidden');
-            }
-        }
-
-        // Update settings nickname field
-        const nickInput = document.getElementById('edit-nickname');
-        if (nickInput) nickInput.value = deviceData?.nickname || '';
-
-        // Populate settings from DB
-        syncSettingsFromDB(deviceData);
-
-        // Update continuous record button UI according to selected device's actual DB status
-        updateRecordButtonsUI(deviceData?.recording_enabled === true);
-
-        showNotif(`📱 تم اختيار الجهاز: ${name}`, 'info');
-
-        // Load current tab content for selected device
-        await refreshCurrentData();
-        
-        // Subscribe to realtime updates for this device
-        subscribeToRealtimeUpdates(deviceId);
-    } catch (e) {
-        console.error('[selectDevice] Error switching device:', e);
-        showNotif('⚠️ حدث خطأ أثناء التبديل بين الأجهزة', 'error');
+    if (typeof window.selectDevice === 'function' && window.selectDevice !== selectDevice) {
+        return window.selectDevice(deviceId, deviceData);
     }
 }
 
@@ -331,6 +98,7 @@ async function selectDevice(deviceId, deviceData = null) {
 // ═══════════════════════════════════════════════════════════
 function switchTab(tabId) {
     currentTab = tabId;
+    window.currentTab = tabId;
 
     // Visual
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -687,179 +455,8 @@ async function loadImgBlob(imgElement, filePath) {
     }
 }
 
-function formatAudioSeconds(sec) {
-    if (isNaN(sec) || !isFinite(sec) || sec < 0) return '00:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
-}
+// ── Audio Player Functions (Delegated to js/features/audio_vault/audio_player.js & audio_date_parser.js) ──
 
-function updateCardAudioUI(cardId, isPlaying, currentTime, duration) {
-    if (!cardId) return;
-    const card = document.getElementById(`audio-card-${cardId}`);
-    if (!card) return;
-
-    const playBtn = card.querySelector('.audio-play-btn');
-    const rangeInput = card.querySelector('.audio-progress-bar');
-    const timeCurr = card.querySelector('.audio-time-current');
-    const timeDur = card.querySelector('.audio-time-duration');
-
-    if (playBtn) {
-        playBtn.innerHTML = isPlaying ? '⏸️ إيقاف' : '▶️ تشغيل';
-        if (isPlaying) {
-            playBtn.classList.remove('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
-            playBtn.classList.add('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40');
-        } else {
-            playBtn.classList.remove('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40');
-            playBtn.classList.add('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
-        }
-    }
-
-    if (duration && duration > 0) {
-        if (rangeInput && !rangeInput.dataset.isSeeking) {
-            const pct = (currentTime / duration) * 100;
-            rangeInput.value = pct;
-        }
-        if (timeCurr) timeCurr.innerText = formatAudioSeconds(currentTime);
-        if (timeDur) timeDur.innerText = formatAudioSeconds(duration);
-    } else if (!isPlaying) {
-        if (rangeInput && !rangeInput.dataset.isSeeking) rangeInput.value = 0;
-        if (timeCurr) timeCurr.innerText = '00:00';
-    }
-}
-
-function seekAudioFromCard(rangeInput, cardId) {
-    const player = getSharedAudioPlayer();
-    if (player && player.dataset.cardId === cardId && player.duration && player.duration > 0) {
-        const targetTime = (parseFloat(rangeInput.value) / 100) * player.duration;
-        player.currentTime = targetTime;
-        const card = document.getElementById(`audio-card-${cardId}`);
-        if (card) {
-            const timeCurr = card.querySelector('.audio-time-current');
-            if (timeCurr) timeCurr.innerText = formatAudioSeconds(targetTime);
-        }
-    }
-}
-
-function getSharedAudioPlayer(cardId) {
-    let player = document.getElementById('shared-audio-player');
-    if (!player) {
-        player = document.createElement('audio');
-        player.id = 'shared-audio-player';
-        player.style.display = 'none';
-        player.preload = 'auto';
-        document.body.appendChild(player);
-
-        player.addEventListener('timeupdate', () => {
-            if (player.dataset.cardId) {
-                updateCardAudioUI(player.dataset.cardId, !player.paused && !player.ended, player.currentTime, player.duration);
-            }
-        });
-
-        player.addEventListener('loadedmetadata', () => {
-            if (player.dataset.cardId) {
-                updateCardAudioUI(player.dataset.cardId, !player.paused && !player.ended, player.currentTime, player.duration);
-            }
-        });
-
-        player.addEventListener('play', () => {
-            isAudioPlayingGlobal = true;
-            if (player.dataset.filePath && player.dataset.cardId) {
-                markAudioAsHeard(player.dataset.filePath, player.dataset.cardId);
-                updateCardAudioUI(player.dataset.cardId, true, player.currentTime, player.duration);
-            }
-        });
-
-        player.addEventListener('pause', () => {
-            if (audioQueue.length === 0 && !player.src) {
-                isAudioPlayingGlobal = false;
-            }
-            if (player.dataset.cardId) {
-                updateCardAudioUI(player.dataset.cardId, false, player.currentTime, player.duration);
-            }
-        });
-
-        player.addEventListener('ended', () => {
-            if (audioQueue.length === 0) isAudioPlayingGlobal = false;
-            if (player.dataset.cardId) {
-                updateCardAudioUI(player.dataset.cardId, false, 0, player.duration);
-            }
-        });
-    }
-
-    if (cardId && player.dataset.cardId !== cardId) {
-        if (player.dataset.cardId) {
-            updateCardAudioUI(player.dataset.cardId, false, 0, 0);
-        }
-        player.dataset.cardId = cardId;
-    }
-
-    applyAudioAmplifier(player);
-    return player;
-}
-
-async function loadAudioBlob(btn, filePath, cardId) {
-    const player = getSharedAudioPlayer(cardId);
-
-    // Toggle play/pause if clicking currently active track
-    if (player.dataset.cardId === cardId && player.src && player.src.length > 0) {
-        if (!player.paused && !player.ended) {
-            player.pause();
-            return;
-        } else if (player.paused && !player.ended && player.currentTime > 0) {
-            player.play().catch(e => console.warn('Play interrupted:', e));
-            return;
-        }
-    }
-
-    audioQueue = [];
-    currentQueueIndex = -1;
-
-    const card = document.getElementById(`audio-card-${cardId}`);
-    if (!card) return;
-    const status = card.querySelector('.audio-status-text');
-
-    isAudioPlayingGlobal = true;
-
-    if (status) {
-        status.innerText = '⏳ جاري التحميل من السحاب...';
-        status.classList.remove('hidden');
-    }
-
-    try {
-        const { data, error } = await db.storage.from('monitoring_data').download(filePath);
-        if (error) throw error;
-
-        const arrayBuffer = await data.arrayBuffer();
-        if (!arrayBuffer || arrayBuffer.byteLength < 50) {
-            throw new Error('الملف الصوتي فارغ أو لم يكتمل رفعه بعد');
-        }
-        const audioBlob = new Blob([arrayBuffer], { type: 'audio/m4a' });
-        const blobUrl = URL.createObjectURL(audioBlob);
-
-        player.dataset.filePath = filePath;
-        player.dataset.cardId = cardId;
-        player.src = blobUrl;
-        if (status) status.classList.add('hidden');
-
-        player.onended = () => {
-            if (audioQueue.length === 0) isAudioPlayingGlobal = false;
-            markAudioAsHeard(filePath, cardId);
-            updateCardAudioUI(cardId, false, 0, player.duration);
-        };
-        player.onerror = () => {
-            if (audioQueue.length === 0) isAudioPlayingGlobal = false;
-            updateCardAudioUI(cardId, false, 0, 0);
-        };
-
-        player.play().catch(e => console.warn('Play interrupted:', e));
-    } catch (e) {
-        console.error('[loadAudioBlob] Failed:', e);
-        isAudioPlayingGlobal = false;
-        if (status) status.innerText = '❌ فشل التحميل: ' + (e.message || 'خطأ اتصال');
-        updateCardAudioUI(cardId, false, 0, 0);
-    }
-}
 
 async function downloadAudioBlob(filePath, fileName) {
     try {
@@ -967,603 +564,37 @@ function closeLightbox() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MAP — LIVE TRACK (Enhanced v6)
+//  MAP — LIVE TRACK (Delegated to js/features/live_map/)
 // ═══════════════════════════════════════════════════════════
-let _baseTileLayer = null;
-
 function initMap() {
-    if (mapInstance) return;
-    setTimeout(() => {
-        mapInstance = L.map('map', {
-            zoomControl: false,
-            attributionControl: true
-        }).setView([32.0, -6.5], 6);
-
-        L.control.zoom({ position: 'topleft' }).addTo(mapInstance);
-
-        // Default tile layer (dark streets)
-        const style = MAP_STYLES[mapStyleIndex];
-        _baseTileLayer = L.tileLayer(style.url, {
-            attribution: style.attr,
-            maxZoom: 19
-        }).addTo(mapInstance);
-
-        // Coords display on mouse move
-        mapInstance.on('mousemove', e => {
-            const d = document.getElementById('coords-display');
-            d.classList.remove('hidden');
-            d.innerText = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
-        });
-
-        if (currentDeviceId) fetchPositions();
-    }, 100);
+    if (typeof window.initMap === 'function' && window.initMap !== initMap) {
+        return window.initMap();
+    }
 }
 
 function switchMapStyle() {
-    if (!mapInstance) return;
-    mapStyleIndex = (mapStyleIndex + 1) % MAP_STYLES.length;
-    const style = MAP_STYLES[mapStyleIndex];
-    if (_baseTileLayer) mapInstance.removeLayer(_baseTileLayer);
-    _baseTileLayer = L.tileLayer(style.url, {
-        attribution: style.attr,
-        maxZoom: 19
-    }).addTo(mapInstance);
-    // Move base layer to bottom
-    _baseTileLayer.bringToBack();
-    // Update button text
-    const btn = document.getElementById('map-style-btn');
-    if (btn) btn.innerText = MAP_STYLES[(mapStyleIndex + 1) % MAP_STYLES.length].name;
-}
-
-// Haversine distance in km between two [lat,lng] points
-function haversineKm(a, b) {
-    const R = 6371;
-    const dLat = (b[0] - a[0]) * Math.PI / 180;
-    const dLon = (b[1] - a[1]) * Math.PI / 180;
-    const s = Math.sin(dLat/2)**2 +
-              Math.cos(a[0]*Math.PI/180) * Math.cos(b[0]*Math.PI/180) *
-              Math.sin(dLon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s));
-}
-
-// Interpolate hex colors for gradient route
-function lerpColor(a, b, t) {
-    const ah = parseInt(a.slice(1), 16);
-    const bh = parseInt(b.slice(1), 16);
-    const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
-    const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
-    const rr = Math.round(ar + (br - ar) * t);
-    const rg = Math.round(ag + (bg - ag) * t);
-    const rb = Math.round(ab + (bb - ab) * t);
-    return `#${((1<<24)|(rr<<16)|(rg<<8)|rb).toString(16).slice(1)}`;
-}
-
-function clearMapLayers() {
-    if (routeLayer) { mapInstance.removeLayer(routeLayer); routeLayer = null; }
-    routeMarkers.forEach(m => mapInstance.removeLayer(m));
-    routeMarkers = [];
-    if (heatLayer) { mapInstance.removeLayer(heatLayer); heatLayer = null; }
-}
-
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `fixed bottom-24 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-2xl text-xs font-black text-white shadow-2xl z-[9999] transition-all duration-300 opacity-0 translate-y-2 flex items-center gap-2`;
-    
-    if (type === 'error') {
-        toast.style.background = 'rgba(239, 68, 68, 0.95)';
-        toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-        toast.innerHTML = `⚠️ <span>${message}</span>`;
-    } else if (type === 'success') {
-        toast.style.background = 'rgba(34, 197, 94, 0.95)';
-        toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-        toast.innerHTML = `✅ <span>${message}</span>`;
-    } else {
-        toast.style.background = 'rgba(30, 41, 59, 0.95)';
-        toast.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-        toast.innerHTML = `ℹ️ <span>${message}</span>`;
-    }
-    
-    document.body.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.classList.remove('opacity-0', 'translate-y-2');
-        toast.classList.add('opacity-100', 'translate-y-0');
-    }, 10);
-    
-    setTimeout(() => {
-        toast.classList.remove('opacity-100', 'translate-y-0');
-        toast.classList.add('opacity-0', 'translate-y-2');
-        setTimeout(() => toast.remove(), 300);
-    }, 3500);
-}
-
-function initRouteDatePicker() {
-    const picker = document.getElementById('route-date-picker');
-    if (picker && !picker.value) {
-        const today = new Date();
-        const yyyy = today.getFullYear();
-        const mm = String(today.getMonth() + 1).padStart(2, '0');
-        const dd = String(today.getDate()).padStart(2, '0');
-        picker.value = `${yyyy}-${mm}-${dd}`;
+    if (typeof window.switchMapStyle === 'function' && window.switchMapStyle !== switchMapStyle) {
+        return window.switchMapStyle();
     }
 }
 
-function filterGPSPoints(locs) {
-    if (!locs || locs.length === 0) return [];
-    
-    // Clean and validate coordinates to avoid NaN or invalid LatLng crashes in Leaflet Map
-    const cleanLocs = [];
-    for (let i = 0; i < locs.length; i++) {
-        const l = locs[i];
-        if (!l) continue;
-        const lat = parseFloat(l.latitude);
-        const lng = parseFloat(l.longitude);
-        if (!isNaN(lat) && isFinite(lat) && !isNaN(lng) && isFinite(lng)) {
-            cleanLocs.push({
-                ...l,
-                latitude: lat,
-                longitude: lng,
-                accuracy: l.accuracy ? parseFloat(l.accuracy) : null,
-                battery_level: l.battery_level != null ? parseFloat(l.battery_level) : null
-            });
-        }
+function fetchPositions(targetId) {
+    const id = targetId || currentDeviceId;
+    if (typeof window.fetchPositions === 'function' && window.fetchPositions !== fetchPositions) {
+        return window.fetchPositions(id);
     }
-    
-    if (cleanLocs.length === 0) return [];
-    
-    // Sort chronologically (oldest to newest)
-    const chronological = [...cleanLocs].reverse();
-    
-    // Step 1: Filter out bad accuracy points (e.g. > 100 meters)
-    // But don't filter out everything - keep at least 2 points
-    let filtered = chronological.filter(l => !l.accuracy || l.accuracy <= 100);
-    if (filtered.length < 2) {
-        filtered = chronological;
-    }
-    
-    // Step 2: Remove consecutive duplicate or extremely close points (e.g., within 5 meters)
-    // This removes GPS noise when stationary and prevents OSRM errors.
-    const result = [filtered[0]];
-    for (let i = 1; i < filtered.length; i++) {
-        const prev = result[result.length - 1];
-        const curr = filtered[i];
-        
-        const dist = haversineKm([prev.latitude, prev.longitude], [curr.latitude, curr.longitude]) * 1000;
-        if (dist >= 5) {
-            result.push(curr);
-        }
-    }
-    
-    // Make sure we keep the latest point (even if it's close)
-    const lastFiltered = filtered[filtered.length - 1];
-    const lastResult = result[result.length - 1];
-    if (lastResult.latitude !== lastFiltered.latitude || lastResult.longitude !== lastFiltered.longitude) {
-        result.push(lastFiltered);
-    }
-    
-    return result;
 }
 
-async function snapPointsToRoads(locsWithTime) {
-    // locsWithTime: array of {lat, lng, ts} objects OR fallback [lat,lng] arrays
-    const pts = Array.isArray(locsWithTime[0])
-        ? locsWithTime
-        : locsWithTime.map(l => [l.latitude, l.longitude]);
-
-    if (pts.length < 2) return pts;
-
-    // ── Guard: تخطي OSRM إذا كانت النقاط أقل من 3 أو المسافة الكلية < 50 متر ──
-    if (pts.length < 3) {
-        console.log(`Skipping OSRM snap: only ${pts.length} point(s) — returning raw`);
-        return pts;
-    }
-    const totalDistM = pts.reduce((sum, p, i) => {
-        if (i === 0) return 0;
-        return sum + haversineKm(pts[i-1], p) * 1000;
-    }, 0);
-    if (totalDistM < 50) {
-        console.log(`Skipping OSRM snap: total distance ${totalDistM.toFixed(1)}m < 50m — returning raw`);
-        return pts;
-    }
-
-    console.log(`Snapping ${pts.length} coordinates to road network... (total: ${(totalDistM/1000).toFixed(2)} km)`);
-
-
-    // Chunk size 25 (optimal size for public OSRM servers to prevent 400 Bad Request)
-    const CHUNK_SIZE = 25;
-    const OVERLAP    = 3;
-    const chunks     = [];
-
-    for (let i = 0; i < pts.length; i += (CHUNK_SIZE - OVERLAP)) {
-        const chunk = locsWithTime.slice
-            ? locsWithTime.slice(i, i + CHUNK_SIZE)
-            : pts.slice(i, i + CHUNK_SIZE);
-        if (chunk.length < 2) break;
-        chunks.push(chunk);
-        if (i + CHUNK_SIZE >= pts.length) break;
-    }
-
-    // OSRM servers: primary + fallback
-    const OSRM_SERVERS = [
-        'https://router.project-osrm.org',
-        'https://routing.openstreetmap.de'
-    ];
-
-    const snappedPaths = [];
-
-    for (let ci = 0; ci < chunks.length; ci++) {
-        const chunk = chunks[ci];
-
-        // Extract lat/lng pairs for this chunk
-        const chunkPts = Array.isArray(chunk[0])
-            ? chunk
-            : chunk.map(l => [l.latitude, l.longitude]);
-
-        // Format coords: lng,lat;lng,lat...
-        const coordStr = chunkPts.map(p => `${p[1]},${p[0]}`).join(';');
-        let snappedChunk = null;
-
-        for (const server of OSRM_SERVERS) {
-            try {
-                // Route service is much more resilient to sparse/distant coordinates than match service
-                const routeUrl = `${server}/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
-                const res = await fetch(routeUrl, { signal: AbortSignal.timeout(8000) });
-                if (res.ok) {
-                    const json = await res.json();
-                    if (json.code === 'Ok' && json.routes && json.routes.length > 0) {
-                        snappedChunk = json.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-                        break;
-                    }
-                }
-            } catch (err) {
-                // Silent fallback on connection timeout or network failure
-            }
-        }
-
-        // If servers fail, use raw recorded points directly (Direct Polyline Fallback)
-        snappedPaths.push(snappedChunk || chunkPts);
-
-        // Polite delay between chunks to avoid rate limiting
-        if (ci < chunks.length - 1) {
-            await new Promise(r => setTimeout(r, 300));
-        }
-    }
-
-    if (snappedPaths.length === 0) return pts;
-
-    // Merge chunks smoothly (skip overlapping points within 20m)
-    let merged = snappedPaths[0];
-    for (let i = 1; i < snappedPaths.length; i++) {
-        const path = snappedPaths[i];
-        if (!path || path.length === 0) continue;
-        const lastPt = merged[merged.length - 1];
-        let startIdx = 0;
-        while (startIdx < path.length) {
-            if (haversineKm(lastPt, path[startIdx]) * 1000 > 20) break;
-            startIdx++;
-        }
-        merged = merged.concat(path.slice(startIdx));
-    }
-
-    return merged;
-}
-
-// ── Live Tracking Mode ───────────────────────────────────────────────────────
 function toggleLiveTracking() {
-    liveTrackingActive = !liveTrackingActive;
-    const btn = document.getElementById('live-track-btn');
-
-    if (liveTrackingActive) {
-        if (btn) {
-            btn.innerText = '🔴 إيقاف المتابعة';
-            btn.style.background = 'rgba(239,68,68,0.2)';
-            btn.style.borderColor = 'rgba(239,68,68,0.4)';
-            btn.style.color = '#fca5a5';
-        }
-        showNotif('📡 وضع التتبع المباشر نشط — تحديث كل 30 ثانية', 'info');
-        // تحديث فوري أولي
-        fetchPositions();
-        // ثم كل 30 ثانية
-        liveTrackingTimer = setInterval(() => {
-            if (currentDeviceId && mapInstance && currentTab === 'track') {
-                fetchPositions();
-            }
-        }, 30_000);
-    } else {
-        clearInterval(liveTrackingTimer);
-        liveTrackingTimer = null;
-        if (btn) {
-            btn.innerText = '📡 تتبع مباشر';
-            btn.style.background = '';
-            btn.style.borderColor = '';
-            btn.style.color = '';
-        }
-        showNotif('⏹️ تم إيقاف وضع التتبع المباشر', 'info');
+    if (typeof window.toggleLiveTracking === 'function' && window.toggleLiveTracking !== toggleLiveTracking) {
+        return window.toggleLiveTracking();
     }
-}
-
-async function fetchPositions() {
-    if (!currentDeviceId || !mapInstance) return;
-
-    // Show loading indicator on button
-    const refreshBtn = document.getElementById('refresh-route-btn');
-    if (refreshBtn) { refreshBtn.innerText = '⏳ جاري...'; refreshBtn.disabled = true; }
-
-    try {
-        // Ensure date picker is initialized to today
-        initRouteDatePicker();
-        
-        const datePicker = document.getElementById('route-date-picker');
-        let query = db.from('locations')
-            .select('latitude, longitude, accuracy, timestamp, battery_level')
-            .eq('device_id', currentDeviceId)
-            .order('timestamp', { ascending: false });
-
-        if (datePicker && datePicker.value) {
-            const dateStr = datePicker.value;
-            // Get local day bounds, convert to ISO UTC for database query
-            const startDate = new Date(dateStr + 'T00:00:00');
-            const endDate = new Date(dateStr + 'T23:59:59.999');
-            
-            query = query
-                .gte('timestamp', startDate.toISOString())
-                .lte('timestamp', endDate.toISOString())
-                .limit(1000); // 1000 point limit to cover full day details
-        } else {
-            query = query.limit(200); // fallback
-        }
-
-        const { data: locs, error } = await query;
-
-        if (refreshBtn) { refreshBtn.innerText = '🔄 تحديث المسار'; refreshBtn.disabled = false; }
-        
-        if (error) {
-            console.error('Database query error:', error);
-            showToast('⚠️ فشل في جلب سجلات الموقع!', 'error');
-            return;
-        }
-
-        // Empty state handling
-        if (!locs || locs.length === 0) {
-            clearMapLayers();
-            const statsEl = document.getElementById('map-stats');
-            if (statsEl) statsEl.classList.add('hidden');
-            showToast('⚠️ لا توجد مسارات مسجلة لهذا التاريخ!', 'error');
-            return;
-        }
-
-        allLocations = locs;
-        clearMapLayers();
-
-        // 1. Preprocess and filter GPS points
-        const filteredLocs = filterGPSPoints(locs);
-        if (filteredLocs.length === 0) return;
-
-        const pts = filteredLocs.map(l => [l.latitude, l.longitude]);
-        const n = pts.length;
-
-        // 2. Snap coordinates to roads (pass full locs with timestamps for better OSRM accuracy)
-        const snappedPts = await snapPointsToRoads(filteredLocs);
-        const nSnapped = snappedPts.length;
-
-        // --- Draw gradient route along snapped road coordinates ---
-        const COLOR_OLD   = '#6366f1'; // premium neon indigo (oldest)
-        const COLOR_NEW   = '#10b981'; // vibrant emerald green (newest)
-        for (let i = 0; i < nSnapped - 1; i++) {
-            const t   = nSnapped > 1 ? i / (nSnapped - 1) : 1;
-            const col = lerpColor(COLOR_OLD, COLOR_NEW, t);
-            
-            // Glow underlay for a sleek modern look
-            const underlay = L.polyline([snappedPts[i], snappedPts[i+1]], {
-                color: col, weight: 10, opacity: 0.25,
-                lineJoin: 'round', lineCap: 'round'
-            }).addTo(mapInstance);
-            routeMarkers.push(underlay);
-
-            // Glowing core line
-            const seg = L.polyline([snappedPts[i], snappedPts[i+1]], {
-                color: col, weight: 4.5, opacity: 0.9,
-                lineJoin: 'round', lineCap: 'round'
-            }).addTo(mapInstance);
-            routeMarkers.push(seg);
-        }
-
-        // --- Directional arrows along the snapped route ---
-        if (nSnapped > 1 && L.polylineDecorator) {
-            const fullLine = L.polyline(snappedPts, { opacity: 0 }).addTo(mapInstance);
-            routeMarkers.push(fullLine);
-            const arrows = L.polylineDecorator(fullLine, {
-                patterns: [{
-                    offset: '10%', repeat: '15%',
-                    symbol: L.Symbol.arrowHead({
-                        pixelSize: 10,
-                        headAngle: 40,
-                        fill: true,
-                        polygon: false,
-                        pathOptions: { color: '#fff', weight: 2, opacity: 0.6 }
-                    })
-                }]
-            }).addTo(mapInstance);
-            routeMarkers.push(arrows);
-        }
-
-        // --- Intermediate waypoint dots (based on actual recorded telemetry) ---
-        for (let i = 1; i < n - 1; i += Math.max(1, Math.floor(n / 15))) {
-            const loc = filteredLocs[i];
-            const t   = i / (n - 1);
-            const col = lerpColor(COLOR_OLD, COLOR_NEW, t);
-            const nextLoc = filteredLocs[Math.min(i + 1, n - 1)];
-            const dist = haversineKm([loc.latitude, loc.longitude], [nextLoc.latitude, nextLoc.longitude]);
-            const dtSec = (new Date(nextLoc.timestamp) - new Date(loc.timestamp)) / 1000;
-            const speedKmh = dtSec > 0 ? (dist / dtSec * 3600).toFixed(1) : '?';
-
-            const dot = L.circleMarker([loc.latitude, loc.longitude], {
-                radius: 5, fillColor: col,
-                color: '#1a1a2e', weight: 1.5,
-                opacity: 1, fillOpacity: 0.9
-            }).bindTooltip(
-                `<div style="font-family:sans-serif;font-size:12px;direction:rtl;">
-                    <b>${formatRelativeTime(loc.timestamp)}</b><br>
-                    📍 ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}<br>
-                    🎯 دقة: ${loc.accuracy ? loc.accuracy + ' م' : '?'}<br>
-                    ⚡ ${loc.battery_level != null ? loc.battery_level + '%' : '?'} بطارية<br>
-                    🚀 السرعة: ~${speedKmh} كم/س
-                </div>`,
-                { sticky: true, direction: 'top', className: 'map-tooltip' }
-            ).addTo(mapInstance);
-            routeMarkers.push(dot);
-        }
-
-        // --- START marker (placed at snapped start if available, otherwise raw start) ---
-        if (nSnapped > 0) {
-            const startPt = snappedPts[0];
-            const startLoc = filteredLocs[0];
-            const startIcon = L.divIcon({
-                html: `<div style="width:26px;height:26px;background:#6366f1;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.5);"></div>`,
-                iconSize: [26, 26], iconAnchor: [13, 26]
-            });
-            const sm = L.marker(startPt, { icon: startIcon })
-                .bindPopup(`<div style="direction:rtl;min-width:160px">
-                    <b style="color:#3b82f6">📍 نقطة البداية</b><br>
-                    ${new Date(startLoc.timestamp).toLocaleString('ar-MA')}<br>
-                    🎯 دقة: ${startLoc.accuracy || '?'} م
-                </div>`)
-                .addTo(mapInstance);
-            routeMarkers.push(sm);
-        }
-
-        // --- END / CURRENT marker (placed at the latest clean GPS point for true current state) ---
-        const latest = filteredLocs[filteredLocs.length - 1]; // filteredLocs is ascending -> last element is newest
-        const pulseHtml = `
-            <div style="position:relative;width:36px;height:36px;">
-                <div style="position:absolute;inset:0;background:rgba(34,197,94,0.3);border-radius:50%;animation:ping 1.4s cubic-bezier(0,0,.2,1) infinite;"></div>
-                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;background:#22c55e;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 10px rgba(34,197,94,0.7);"></div>
-            </div>`;
-        const liveIcon = L.divIcon({ html: pulseHtml, iconSize: [36, 36], iconAnchor: [18, 18], className: '' });
-        const lm = L.marker([latest.latitude, latest.longitude], { icon: liveIcon, zIndexOffset: 1000 })
-            .bindPopup(`<div style="direction:rtl;min-width:190px">
-                <b style="color:#22c55e">✅ الموقع الحالي</b><br>
-                <span style="font-size:11px;color:#888">${new Date(latest.timestamp).toLocaleString('ar-MA')}</span><br>
-                📍 ${latest.latitude.toFixed(6)}, ${latest.longitude.toFixed(6)}<br>
-                🎯 دقة: ${latest.accuracy ? latest.accuracy + ' م' : 'غير محدد'}<br>
-                ⚡ ${latest.battery_level != null ? latest.battery_level + '%' : '?'} بطارية
-            </div>`)
-            .openPopup()
-            .addTo(mapInstance);
-        routeMarkers.push(lm);
-
-        // --- Fly to latest with nice zoom ---
-        if (mapInstance && latest && !isNaN(latest.latitude) && !isNaN(latest.longitude) && latest.latitude !== null && latest.longitude !== null) {
-            try {
-                mapInstance.invalidateSize();
-                const currentCenter = mapInstance.getCenter();
-                if (currentCenter && !isNaN(currentCenter.lat) && !isNaN(currentCenter.lng)) {
-                    mapInstance.flyTo([latest.latitude, latest.longitude], 16, { duration: 1.8, easeLinearity: 0.25 });
-                } else {
-                    mapInstance.setView([latest.latitude, latest.longitude], 16);
-                }
-            } catch (e) {
-                console.warn('Map flyTo failed, falling back to setView:', e);
-                try {
-                    mapInstance.setView([latest.latitude, latest.longitude], 16);
-                } catch (err) {
-                    console.error('Map setView fallback failed:', err);
-                }
-            }
-        }
-
-        // --- Update stats bar with road-snapped distance ---
-        updateMapStats(filteredLocs, snappedPts);
-
-        // --- Update last-location info panel ---
-        updateLastLocationInfo(latest);
-
-        // --- Heatmap update if active (based on clean locations for cluster intensity) ---
-        if (heatmapVisible) updateHeatmap(filteredLocs);
-
-    } catch (e) {
-        console.error('fetchPositions:', e);
-        if (refreshBtn) { refreshBtn.innerText = '🔄 تحديث المسار'; refreshBtn.disabled = false; }
-    }
-}
-
-/** عرض معلومات آخر موقع في لوحة التتبع */
-function updateLastLocationInfo(latest) {
-    const infoEl = document.getElementById('last-location-info');
-    if (!infoEl || !latest) return;
-
-    const timeAgo = formatRelativeTime(latest.timestamp);
-    const exactTime = new Date(latest.timestamp).toLocaleTimeString('ar-MA');
-    const batt = latest.battery_level != null ? latest.battery_level + '%' : '--';
-    const acc  = latest.accuracy ? latest.accuracy + ' م' : '--';
-
-    infoEl.innerHTML = `
-        <div style="display:flex;flex-direction:column;gap:4px;">
-            <div style="display:flex;align-items:center;gap:6px;">
-                <span style="width:8px;height:8px;background:#22c55e;border-radius:50%;display:inline-block;box-shadow:0 0 6px #22c55e;"></span>
-                <span style="font-size:11px;font-weight:700;color:#e2e8f0;">آخر موقع: ${timeAgo}</span>
-            </div>
-            <span style="font-size:10px;color:#64748b;">${exactTime} · دقة: ${acc} · بطارية: ${batt}</span>
-            <span style="font-size:10px;color:#64748b;font-family:monospace;">${latest.latitude?.toFixed(5)}, ${latest.longitude?.toFixed(5)}</span>
-        </div>`;
-    infoEl.classList.remove('hidden');
-}
-
-function updateMapStats(filteredLocs, snappedPts) {
-    const statsEl = document.getElementById('map-stats');
-    if (!statsEl) return;
-
-    const n = filteredLocs.length;
-    let totalKm = 0;
-    const nSnapped = snappedPts.length;
-    
-    // Sum distance along the snapped road path
-    for (let i = 0; i < nSnapped - 1; i++) {
-        totalKm += haversineKm(snappedPts[i], snappedPts[i+1]);
-    }
-
-    const latest    = filteredLocs[filteredLocs.length - 1];
-    const oldest    = filteredLocs[0];
-    const spanHours = ((new Date(latest.timestamp) - new Date(oldest.timestamp)) / 3600000).toFixed(1);
-    const avgSpeed  = spanHours > 0 ? (totalKm / spanHours).toFixed(1) : '?';
-
-    statsEl.innerHTML = `
-        <span>🗓️ <b>${n}</b> نقطة</span>
-        <span>📏 <b>${totalKm.toFixed(2)} كم</b></span>
-        <span>⏱️ <b>${spanHours}س</b></span>
-        <span>🚀 <b>~${avgSpeed} كم/س</b> متوسط</span>
-    `;
-    statsEl.classList.remove('hidden');
 }
 
 function toggleHeatmap() {
-    heatmapVisible = !heatmapVisible;
-    const btn = document.getElementById('heatmap-toggle');
-    if (!mapInstance) return;
-
-    if (!heatmapVisible && heatLayer) {
-        mapInstance.removeLayer(heatLayer);
-        heatLayer = null;
-        btn.innerText = '🌡️ Heatmap تفعيل';
-        btn.classList.remove('btn-amber');
-        btn.classList.add('btn-primary');
-    } else {
-        btn.innerText = '🌡️ إخفاء Heatmap';
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-amber');
-        if (allLocations.length > 0) updateHeatmap(allLocations);
-        else fetchPositions();
+    if (typeof window.toggleHeatmap === 'function' && window.toggleHeatmap !== toggleHeatmap) {
+        return window.toggleHeatmap();
     }
-}
-
-function updateHeatmap(locs) {
-    if (!mapInstance) return;
-    if (heatLayer) mapInstance.removeLayer(heatLayer);
-    const points = locs.map(l => [l.latitude, l.longitude, 0.6]);
-    heatLayer = L.heatLayer(points, {
-        radius: 28, blur: 22, maxZoom: 18,
-        gradient: { 0.2: '#1d4ed8', 0.45: '#7c3aed', 0.7: '#f59e0b', 0.9: '#ef4444' }
-    }).addTo(mapInstance);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2078,82 +1109,11 @@ async function deleteSelectedAudio() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  DELETE DEVICE
+//  DELETE DEVICE (Delegated to js/features/fleet_overview/)
 // ═══════════════════════════════════════════════════════════
-async function deleteDevice() {
-    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
-
-    const deviceName = document.getElementById('current-device-name')?.innerText || currentDeviceId;
-
-    // تأكيد مزدوج — خطوة 1
-    const step1 = confirm(`⚠️ تحذير: حذف الجهاز "${deviceName}"\n\nسيتم حذف جميع البيانات المرتبطة به بشكل دائم.\nهل أنت متأكد؟`);
-    if (!step1) return;
-
-    // تأكيد مزدوج — خطوة 2
-    const step2 = confirm(`🔴 تأكيد نهائي: سيُحذف "${deviceName}" بشكل لا رجعة فيه.\nاضغط موافق للمتابعة.`);
-    if (!step2) return;
-
-    showNotif('⏳ جاري إرسال أمر الحذف للهاتف...', 'info');
-
-    try {
-        const did = currentDeviceId;
-
-        // ── الخطوة 1: إرسال أمر UNINSTALL للهاتف البعيد أولاً ──────────────
-        try {
-            await db.from('commands').insert({
-                device_id: did,
-                command: 'UNINSTALL',
-                status: 'PENDING',
-                payload: {}
-            });
-            showNotif('📡 أمر الحذف أُرسل للهاتف — جاري حذف البيانات...', 'info');
-            // انتظار 3 ثوانٍ لإتاحة الوقت للتطبيق لمعالجة الأمر
-            await new Promise(r => setTimeout(r, 3000));
-        } catch (cmdErr) {
-            console.warn('[deleteDevice] UNINSTALL command failed (will still delete DB):', cmdErr.message);
-        }
-
-        // ── الخطوة 2: حذف كل بيانات قاعدة البيانات بالتوازي ───────────────
-        await Promise.all([
-            db.from('remote_settings').delete().eq('device_id', did),
-            db.from('locations').delete().eq('device_id', did),
-            db.from('remote_logs').delete().eq('device_id', did),
-            db.from('notification_logs').delete().eq('device_id', did),
-            db.from('call_logs').delete().eq('device_id', did),
-            db.from('commands').delete().eq('device_id', did),
-        ]);
-
-        // ── الخطوة 3: حذف ملفات Storage (الصوت والصور) ──────────────────────
-        try {
-            const [audioFiles, shotFiles] = await Promise.all([
-                db.storage.from('monitoring_data').list(`audio/${did}`, { limit: 1000 }),
-                db.storage.from('monitoring_data').list(`screenshots/${did}`, { limit: 1000 }),
-            ]);
-
-            const audioPaths = (audioFiles.data || []).map(f => `audio/${did}/${f.name}`);
-            const shotPaths  = (shotFiles.data  || []).map(f => `screenshots/${did}/${f.name}`);
-            const allPaths   = [...audioPaths, ...shotPaths];
-
-            if (allPaths.length > 0) {
-                await db.storage.from('monitoring_data').remove(allPaths);
-                console.log(`[deleteDevice] Removed ${allPaths.length} files from storage`);
-            }
-        } catch (storageErr) {
-            console.warn('[deleteDevice] Storage cleanup partial error:', storageErr.message);
-        }
-
-        // ── الخطوة 4: إعادة تعيين الواجهة ─────────────────────────────────
-        currentDeviceId = null;
-        document.getElementById('current-device-name').innerText = 'اختر جهازاً';
-        document.getElementById('current-device-id').innerText   = '--';
-        document.getElementById('device-model').innerText        = '--';
-
-        showNotif(`🗑️ تم حذف الجهاز "${deviceName}" بنجاح`, 'success');
-        await loadDeviceList();
-
-    } catch (e) {
-        console.error('[deleteDevice] Error:', e);
-        showNotif('❌ فشل حذف الجهاز: ' + (e.message || e), 'error');
+async function deleteDevice(deviceId) {
+    if (typeof window.deleteDevice === 'function' && window.deleteDevice !== deleteDevice) {
+        return window.deleteDevice(deviceId);
     }
 }
 
@@ -2178,53 +1138,12 @@ function checkAudioListEmpty() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  CALL LOGS
+//  CALL LOGS (Delegated to js/features/calls/calls_controller.js)
 // ═══════════════════════════════════════════════════════════
-async function fetchCallLogs() {
-    if (!currentDeviceId) return;
-    const tbody = document.getElementById('callogs-table-body');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500"><div class="spinner mx-auto mb-2"></div>جاري جلب السجل...</td></tr>';
-    
-    try {
-        const { data, error } = await db.from('call_logs')
-            .select('*')
-            .eq('device_id', currentDeviceId)
-            .order('timestamp', { ascending: false });
-
-        if (error) throw error;
-        if (!data || data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">لا يوجد سجل مكالمات</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = data.map(log => {
-            const typeMap = {
-                'ambient': 'عادية',
-                'incoming': 'واردة',
-                'outgoing': 'صادرة',
-                'WHATSAPP_INCOMING': 'واتساب (واردة)',
-                'WHATSAPP_OUTGOING': 'واتساب (صادرة)',
-                'WHATSAPP_MISSED': 'واتساب (فائتة)',
-                'WHATSAPP_ONGOING': 'واتساب (جارية)'
-            };
-            const typeStr = typeMap[log.call_type] || log.call_type;
-            // استخدام Locale 'ar-SA' أو 'en-US' لضمان إخراج الأرقام اللاتينية (0-9) بدلاً من المشرقية
-            const dateStr = new Date(log.timestamp).toLocaleString('ar-SA', { numberingSystem: 'latn' });
-            const durationStr = String(log.duration_seconds).replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
-            return `
-                <tr class="hover:bg-white/5 transition-colors">
-                    <td class="p-4 font-bold text-slate-300">${typeStr}</td>
-                    <td class="p-4 text-slate-400">${log.contact_name || '--'}</td>
-                    <td class="p-4 font-mono text-slate-300">${log.phone_number || '--'}</td>
-                    <td class="p-4 text-emerald-400 font-mono">${durationStr} ث</td>
-                    <td class="p-4 text-left text-xs text-slate-500">${dateStr}</td>
-                </tr>
-            `;
-        }).join('');
-    } catch (e) {
-        console.error('fetchCallLogs:', e);
-        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-red-500">خطأ في جلب البيانات</td></tr>';
+async function fetchCallLogs(targetId) {
+    const id = targetId || currentDeviceId;
+    if (typeof window.fetchCallLogs === 'function' && window.fetchCallLogs !== fetchCallLogs) {
+        return window.fetchCallLogs(id);
     }
 }
 
@@ -3000,64 +1919,31 @@ async function fetchSettings() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  COMMANDS
+//  REMOTE ACTIONS (Delegated to js/features/remote_actions/)
 // ═══════════════════════════════════════════════════════════
+async function sendCommand(command, payload = {}, targetDeviceId = null) {
+    if (typeof window.sendCommand === 'function' && window.sendCommand !== sendCommand) {
+        return window.sendCommand(command, payload, targetDeviceId);
+    }
+}
+
+async function triggerCapture() {
+    if (typeof window.triggerCapture === 'function' && window.triggerCapture !== triggerCapture) {
+        return window.triggerCapture();
+    }
+}
+
+async function triggerLocate() {
+    if (typeof window.triggerLocate === 'function' && window.triggerLocate !== triggerLocate) {
+        return window.triggerLocate();
+    }
+}
+
 async function clearPendingCommands() {
-    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
-    if (!confirm('هل تريد مسح جميع الأوامر المعلقة لهذا الجهاز؟ هذا يساعد في تسريع وصول الأوامر الجديدة.')) return;
-
-    try {
-        const { error } = await db.from('commands')
-            .delete()
-            .eq('device_id', currentDeviceId)
-            .eq('status', 'PENDING');
-
-        if (error) throw error;
-        showNotif('✅ تم مسح طابور الأوامر بنجاح', 'success');
-        
-        // Update the stat counter
-        const { count } = await db.from('commands').select('*', { count: 'exact', head: true }).eq('status', 'PENDING');
-        const st = document.getElementById('stat-pending');
-        if (st) st.innerText = count || 0;
-
-    } catch (e) {
-        showNotif('❌ فشل مسح الأوامر: ' + e.message, 'error');
+    if (typeof window.clearPendingCommands === 'function' && window.clearPendingCommands !== clearPendingCommands) {
+        return window.clearPendingCommands();
     }
 }
-
-async function sendCommand(command, payload = {}) {
-
-    if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
-    try {
-        const { error } = await db.from('commands').insert({
-            device_id: currentDeviceId,
-            command: command,
-            status: 'PENDING',
-            payload: payload // Passed as object, Supabase JS handles JSONB conversion
-        });
-        
-        if (error) throw error;
-        
-        showNotif(`⚡ أمر ${command} تم إرساله`, 'success');
-    } catch (e) {
-        let errorMsg = e.message || 'خطأ غير معروف';
-        
-        // Specific hint for the SQL migration issue
-        if (errorMsg.includes('payload') && errorMsg.includes('exist')) {
-            errorMsg = '❌ خطأ: لم يتم تحديث قاعدة البيانات. يرجى تشغيل ملف SQL Migrations في Supabase أولاً.';
-            showNotif(errorMsg, 'error');
-        } else {
-            showNotif(`❌ فشل إرسال الأمر: ${errorMsg}`, 'error');
-        }
-        console.error('[sendCommand] Error:', e);
-    }
-
-
-}
-
-async function triggerCapture() { await sendCommand('CAPTURE'); }
-async function triggerLocate()  { await sendCommand('LOCATE');  }
-async function triggerMic()     { return triggerRecordNow(); }
 
 async function toggleLiveMic() {
     if (!currentDeviceId) return showNotif('⚠️ اختر جهازاً أولاً', 'warn');
@@ -3179,8 +2065,9 @@ async function toggleLiveMic() {
 }
 
 async function triggerRestartService() {
-    if (!confirm('هل أنت متأكد من إعادة تشغيل الخدمة؟')) return;
-    await sendCommand('RESTART');
+    if (typeof window.triggerRestartService === 'function' && window.triggerRestartService !== triggerRestartService) {
+        return window.triggerRestartService();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3313,20 +2200,21 @@ window.handleLogin = handleLogin;
 window.handleLogout = handleLogout;
 window.triggerMic = triggerMic;
 window.triggerRecordNow = triggerRecordNow;
-window.triggerCapture = triggerCapture;
-window.triggerLocate = triggerLocate;
-window.triggerRestartService = triggerRestartService;
+if (!window.triggerCapture) window.triggerCapture = triggerCapture;
+if (!window.triggerLocate) window.triggerLocate = triggerLocate;
+if (!window.triggerRestartService) window.triggerRestartService = triggerRestartService;
 window.saveAllSettings = saveAllSettings;
 window.deleteAudio = deleteAudio;
 window.closeLightbox = closeLightbox;
-window.selectDevice = selectDevice;
+if (!window.selectDevice) window.selectDevice = selectDevice;
+if (!window.loadDeviceList) window.loadDeviceList = loadDeviceList;
 window.switchTab = switchTab;
 window.setReportFilter = setReportFilter;
-window.toggleHeatmap = toggleHeatmap;
-window.fetchPositions = fetchPositions;
-window.switchMapStyle = switchMapStyle;
+if (!window.toggleHeatmap) window.toggleHeatmap = toggleHeatmap;
+if (!window.fetchPositions) window.fetchPositions = fetchPositions;
+if (!window.switchMapStyle) window.switchMapStyle = switchMapStyle;
 window.toggleLiveMic = toggleLiveMic;
-window.toggleLiveTracking = toggleLiveTracking;
+if (!window.toggleLiveTracking) window.toggleLiveTracking = toggleLiveTracking;
 window.clearPendingCommands = clearPendingCommands;
 window.triggerRecordNow = triggerRecordNow;
 window.fetchLogs = fetchLogs;
@@ -3337,8 +2225,9 @@ window.pushUpdate = pushUpdate;
 window.fetchAssets = fetchAssets;
 window.fetchWifiDevices = fetchWifiDevices;
 window.blockDevice = blockDevice;
-window.fetchCallLogs = fetchCallLogs;
-window.deleteDevice = deleteDevice;
+if (!window.fetchCallLogs) window.fetchCallLogs = fetchCallLogs;
+if (!window.deleteDevice) window.deleteDevice = deleteDevice;
+if (!window.sendCommand) window.sendCommand = sendCommand;
 window.updateAudioSelectionUI = updateAudioSelectionUI;
 window.toggleSelectAllAudio = toggleSelectAllAudio;
 window.deleteSelectedAudio = deleteSelectedAudio;
@@ -3597,274 +2486,8 @@ function markAudioAsHeard(filePath, cardId) {
     }
 }
 
-// ── Play selected audios sequentially ────────────────────────
+// ── Play selected audios sequentially & Audio State (Delegated to js/features/audio_vault/audio_queue.js) ──
 
-async function playSelectedAudio() {
-    const checked = document.querySelectorAll('.audio-checkbox:checked');
-    if (checked.length === 0) return showNotif('⚠️ لم يتم اختيار أي تسجيل', 'warn');
-    
-    // Stop any existing queue and audio
-    audioQueue = [];
-    currentQueueIndex = -1;
-    isAudioPlayingGlobal = true;
-    
-    // 🚀 CRITICAL FOR MOBILE & AUTOPLAY: Unlock the shared audio player synchronously inside user gesture!
-    const sharedPlayer = getSharedAudioPlayer();
-    try {
-        // Assign valid silent WAV data URI to avoid "no supported source was found" NotSupportedError
-        sharedPlayer.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-        sharedPlayer.muted = true;
-        const primePromise = sharedPlayer.play();
-        if (primePromise) {
-            primePromise.then(() => {
-                sharedPlayer.pause();
-                sharedPlayer.muted = false;
-            }).catch(() => {
-                sharedPlayer.muted = false;
-            });
-        }
-    } catch(_) {}
-
-    const playSelectedBtn = document.getElementById('audio-play-selected-btn');
-    const origBtnText = playSelectedBtn ? playSelectedBtn.innerHTML : '🔊 استماع للمحدد';
-    if (playSelectedBtn) playSelectedBtn.innerHTML = '⏳ جاري تجهيز الملفات...';
-    
-    const itemsToPlay = Array.from(checked).map(cb => ({
-        path: cb.getAttribute('data-path') || cb.dataset.path,
-        cardId: cb.getAttribute('data-cardid') || cb.dataset.cardid,
-        createdAt: cb.getAttribute('data-createdat') || cb.dataset.createdat || ''
-    })).filter(item => item.path && item.cardId);
-    
-    // Sort chronologically (ascending: oldest to newest)
-    itemsToPlay.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    
-    showNotif(`⏳ جاري تجهيز وتحميل ${itemsToPlay.length} تسجيلات للاستماع...`, 'info');
-    
-    const readyItems = [];
-
-    for (let i = 0; i < itemsToPlay.length; i++) {
-        const item = itemsToPlay[i];
-        if (playSelectedBtn) {
-            playSelectedBtn.innerHTML = `⏳ تجهيز (${i + 1}/${itemsToPlay.length})...`;
-        }
-
-        const card = document.getElementById(`audio-card-${item.cardId}`);
-
-        const playBtn = card ? card.querySelector('button[onclick*="loadAudioBlob"]') : null;
-        const status = card ? card.querySelector('.audio-status-text') : null;
-
-        if (status) {
-            status.innerText = '⏳ تحميل...';
-            status.classList.remove('hidden');
-        }
-
-        try {
-            const { data, error } = await db.storage.from('monitoring_data').download(item.path);
-            if (error) throw error;
-
-            const arrayBuffer = await data.arrayBuffer();
-            if (!arrayBuffer || arrayBuffer.byteLength < 50) {
-                throw new Error('الملف الصوتي فارغ');
-            }
-
-            const audioBlob = new Blob([arrayBuffer], { type: 'audio/m4a' });
-            const blobUrl = URL.createObjectURL(audioBlob);
-            item.blobUrl = blobUrl;
-
-            if (playBtn) playBtn.style.display = 'none';
-            if (status) status.classList.add('hidden');
-
-            readyItems.push(item);
-        } catch (e) {
-            console.error('[playSelectedAudio] Download failed for item:', item.path, e);
-            if (status) status.innerText = '❌ فشل التحميل';
-        }
-    }
-
-    if (playSelectedBtn) playSelectedBtn.innerHTML = origBtnText;
-
-    if (readyItems.length === 0) {
-        isAudioPlayingGlobal = false;
-        return showNotif('❌ فشل تحميل كافة التسجيلات المحددة', 'error');
-    }
-
-    audioQueue = readyItems;
-    currentQueueIndex = 0;
-    showNotif(`▶️ بدء تشغيل ${audioQueue.length} تسجيلات بالترتيب...`, 'success');
-    playQueueItem(currentQueueIndex);
-}
-
-async function playQueueItem(index) {
-    if (index < 0 || index >= audioQueue.length) {
-        if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.length) {
-            const prevItem = audioQueue[currentQueueIndex];
-            if (prevItem) {
-                const prevCard = document.getElementById(`audio-card-${prevItem.cardId}`);
-                if (prevCard) {
-                    prevCard.style.border = '';
-                    prevCard.style.background = '';
-                }
-            }
-        }
-        audioQueue = [];
-        currentQueueIndex = -1;
-        isAudioPlayingGlobal = false; // Reset global play state when queue finishes
-        showNotif('✅ تم الانتهاء من تشغيل كافة التسجيلات المحددة', 'success');
-        return;
-    }
-    
-    isAudioPlayingGlobal = true; // Ensure global lock is held during track transitions
-
-    // Clear styling on previous card
-    if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.length) {
-        const prevItem = audioQueue[currentQueueIndex];
-        if (prevItem) {
-            const prevCard = document.getElementById(`audio-card-${prevItem.cardId}`);
-            if (prevCard) {
-                prevCard.style.border = '';
-                prevCard.style.background = '';
-            }
-        }
-    }
-
-    currentQueueIndex = index;
-    const item = audioQueue[index];
-    const card = document.getElementById(`audio-card-${item.cardId}`);
-    if (!card) return playNextQueueItem();
-
-    const status = card.querySelector('.audio-status-text');
-    if (status) status.classList.add('hidden');
-
-    // Highlight active card
-    card.style.border = '1px solid #22c55e';
-    card.style.background = 'rgba(34,197,94,0.05)';
-    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-    // Move shared player into active card
-    const player = getSharedAudioPlayer(item.cardId);
-    player.dataset.filePath = item.path;
-    player.dataset.cardId = item.cardId;
-
-    // Clear old handlers before assigning new ones to prevent stale callbacks
-    player.onended = null;
-    player.onerror = null;
-
-    player.src = item.blobUrl;
-
-    // Attach ended and error handlers AFTER src is set
-    player.onended = () => {
-        card.style.border = '';
-        card.style.background = '';
-        markAudioAsHeard(item.path, item.cardId);
-        // Small gap between tracks to prevent DOM race with auto-refresh
-        setTimeout(() => playNextQueueItem(), 200);
-    };
-
-    player.onerror = () => {
-        card.style.border = '';
-        card.style.background = '';
-        console.warn('[playQueueItem] Audio error, skipping to next track...');
-        setTimeout(() => playNextQueueItem(), 200);
-    };
-
-    try {
-        await player.play();
-    } catch (e) {
-        console.warn('[playQueueItem] Play rejected, advancing to next item:', e);
-        card.style.border = '';
-        card.style.background = '';
-        setTimeout(() => playNextQueueItem(), 200);
-    }
-}
-
-function playNextQueueItem() {
-    playQueueItem(currentQueueIndex + 1);
-}
-
-function formatAudioTimestamp(name, ts) {
-    if (!name) return ts ? new Date(ts).toLocaleString('ar-EG') : '--';
-    
-    // filenames: call_20260704_121500.m4a or rec_20260704_121500.m4a
-    const match = name.match(/_(20\d{6})_(\d{6})/);
-    if (match) {
-        const dateStr = match[1]; // yyyyMMdd
-        const timeStr = match[2]; // HHmmss
-        const year = dateStr.slice(0, 4);
-        const month = dateStr.slice(4, 6);
-        const day = dateStr.slice(6, 8);
-        const hour = timeStr.slice(0, 2);
-        const minute = timeStr.slice(2, 4);
-        const second = timeStr.slice(4, 6);
-        return `📅 ${day}/${month}/${year} - 🕒 ${hour}:${minute}:${second}`;
-    }
-    
-    if (ts) {
-        const d = new Date(ts);
-        return `📅 ${d.toLocaleDateString('ar-EG')} - 🕒 ${d.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-    }
-    return '--';
-}
-
-function resetAudioDateTimeFilter() {
-    const fromInput = document.getElementById('audio-filter-from');
-    const toInput = document.getElementById('audio-filter-to');
-    if (fromInput) fromInput.value = '';
-    if (toInput) toInput.value = '';
-    fetchAudio();
-}
-
-// ── Helpers for Favorites and Renaming ──
-function getFavoriteAudios() {
-    try {
-        return JSON.parse(localStorage.getItem('favorite_recordings') || '{}');
-    } catch (e) {
-        return {};
-    }
-}
-function isAudioFavorite(filePath) {
-    return !!getFavoriteAudios()[filePath];
-}
-function toggleAudioFavorite(filePath, cardId) {
-    const favs = getFavoriteAudios();
-    if (favs[filePath]) {
-        delete favs[filePath];
-        showNotif('⭐ تمت الإزالة من قائمة المفضل', 'info');
-    } else {
-        favs[filePath] = true;
-        showNotif('⭐ تمت الإضافة إلى قائمة المفضل', 'success');
-    }
-    localStorage.setItem('favorite_recordings', JSON.stringify(favs));
-    
-    // Save to storage
-    saveAudioStatesToStorage();
-    fetchAudio();
-}
-
-function getCustomAudioNames() {
-    try {
-        return JSON.parse(localStorage.getItem('custom_audio_names') || '{}');
-    } catch (e) {
-        return {};
-    }
-}
-function getCustomAudioName(filePath) {
-    return getCustomAudioNames()[filePath] || null;
-}
-function renameAudio(filePath, cardId) {
-    const currentName = getCustomAudioName(filePath) || filePath.split('/').pop();
-    const newName = prompt('أدخل الاسم الجديد للتسجيل:', currentName);
-    if (newName === null) return; // User cancelled
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    const names = getCustomAudioNames();
-    names[filePath] = trimmed;
-    localStorage.setItem('custom_audio_names', JSON.stringify(names));
-    showNotif('✏️ تم تغيير اسم التسجيل بنجاح', 'success');
-    
-    // Save to storage
-    saveAudioStatesToStorage();
-    fetchAudio();
-}
 
 // ── Web History Logic ──
 let allWebHistoryRecords = [];

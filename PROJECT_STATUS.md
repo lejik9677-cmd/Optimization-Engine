@@ -1,5 +1,5 @@
 # حالة المشروع — Resource Engine (Parental Control System)
-**آخر تحديث:** 2026-09-20
+**آخر تحديث:** 2026-09-21
 
 ---
 
@@ -12,7 +12,7 @@
 | **Firebase Hosting** | https://optimization-engine-238a4.web.app |
 | **إصدار تطبيق الابن الحالي** | v96 (versionCode=96) |
 | **إصدار تطبيق الكمبيوتر الحالي** | v1.1 (تسجيل ميكروفون وبث سحابي) |
-| **إصدار لوحة التحكم** | fleet_logic.js v96 |
+| **إصدار لوحة التحكم** | fleet_logic.js v96 (CCP Thin Coordinator) |
 
 ---
 
@@ -37,6 +37,7 @@
 
 | الإصدار | التاريخ | أبرز التغييرات |
 |---------|---------|---------------|
+| **v96 (Dashboard CCP Complete)** | 2026-09-21 | اكتمال معمارية CCP الشاملة للوحة التحكم: عزل النواة (core/)، خزينة الصوت (audio_vault/)، المكالمات (calls/)، الخريطة الحية (live_map/)، إدارة الأسطول (fleet_overview/)، والأوامر السريعة (remote_actions/)، وتحويل fleet_logic.js إلى Thin Coordinator. |
 | **v96 (CCP Complete)** | 2026-09-20 | اكتمال معمارية CCP الشاملة لتطبيق الأندرويد وتنظيم النواة (core/)، بناء الـ APKs الموقعة (Full و Lite)، رفع الحزم إلى Supabase Storage بـ Content-Type السليم، ونشر لوحة التحكم المحدثة على Firebase Hosting. |
 | **v95** | 2026-09-01 | ترشيد استهلاك البيانات والبطارية: ضغط الصوت (16kHz/32kbps Mono)، حد زمني أمان للبث المباشر (5 دقائق)، فلتر مسافة ذكي للـ GPS (30 متر)، ترشيد نبضات الحالة (3 دقائق)، وحد أقصى لإعادة المحاولة (3 Retries) |
 | **v93** | 2026-07-31 | الربط بمشروع Supabase النظيف الجديد، رفع APK v93 وتحديث QR Codes ونشر الـ Dashboard على Firebase |
@@ -72,6 +73,40 @@
 ---
 
 ## ✅ الميزات المكتملة (تاريخية)
+
+### جلسة 2026-09-21 (لوحة التحكم — إدارة الأسطول fleet_overview/ والأوامر السريعة remote_actions/ وتحويل fleet_logic.js إلى Thin Coordinator)
+- [x] **إنشاء موديول إدارة الأسطول (`dashboard/js/features/fleet_overview/`):**
+  - `fleet_service.js`: جلب الأجهزة وبيانات الموقع والإعدادات عن بُعد من جداول `remote_settings` و `locations`، تصنيف حالة الأجهزة (متصل / غير متصل) وفق عتبة `ONLINE_THRESHOLD_MINUTES = 30` المعتمدة، تمييز أجهزة ويندوز بـ 🖥️ وأندرويد بـ 📱، مراقبة التغييرات الحية عبر Supabase Realtime، وحذف الجهاز نهائياً مع تطهير ملفاته السحابية (`deleteDevice`).
+  - `fleet_controller.js`: رسم بطاقات الأجهزة في `#device-list`، تحديث القائمة المنسدلة في الموبايل `#mobile-device-dropdown`، إدارة تبديل وتحديد الجهاز النشط (`selectDevice`) وتنشيط الخريطة والمكالمات والتسجيلات للجهاز، وتحديث العدادات الإجمالية (`#stat-devices`، `#stat-online`، `#stat-pending`).
+- [x] **إنشاء موديول الأوامر والإجراءات السريعة (`dashboard/js/features/remote_actions/`):**
+  - `command_dispatcher.js`: مركزية إرسال الأوامر إلى جدول `commands` في Supabase (`sendCommand`)، توفير وظائف الإجراءات السريعة (`triggerCapture`, `triggerLocate`, `triggerRestartService`, `triggerMic`, `clearPendingCommands`)، دعم أمر إلغاء التثبيت (`UNINSTALL`) وأمر إعادة التشغيل (`RESTART`) للخدمة، مع إشعارات منبثقة تفاعلية بنجاح أو فشل الإرسال.
+- [x] **تحويل `fleet_logic.js` إلى منسق رشيق (Thin Coordinator):**
+  - تقليص حجم `fleet_logic.js` بحذف أكثر من 1,440 سطراً من الكود المكرر وتحويله إلى منسق للأحداث.
+  - تفويض دوال الأسطول والأوامر (`loadDeviceList`, `selectDevice`, `deleteDevice`, `sendCommand`, `triggerCapture`, `triggerLocate`, `triggerRestartService`, `clearPendingCommands`) إلى الموديولات المخصصة مع حراسة صارمة ضد التكرار اللانهائي (`window.fn !== fn`).
+- [x] **تحديث الواجهة وإدراج وسوم السكربت في `dashboard/index.html`:**
+  - إدراج `fleet_service.js`، `fleet_controller.js`، و `command_dispatcher.js` بترتيب التحميل السليم قبل `fleet_logic.js`.
+  - تحديث وسوم الكاش-باست لجميع ملفات السكربت إلى `?v=96_20260921_fleet`.
+- [x] **الفحص والتحقق في المتصفح (Browser Verification):**
+  - فحص syntax لجميع ملفات JS الـ 13 عبر `node -c` (خروج بكود 0 دون أي خطأ).
+  - اختبار الواجهة بالمتصفح: تسجيل الدخول التلقائي، تحميل بطاقات الأجهزة، اختبار أزرار شريط الإجراءات السريعة (التقاط، موقع، تحديث)، التبديل بين التبويبات بسلاسة، وتأكيد خلو الـ Console من أي أخطاء أو استثناءات (**0 Uncaught Exceptions**).
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (تطبيق CCP Refactoring - تفكيك لوحة التحكم: النواة core وخزينة الصوت audio_vault)
+- [x] **تفكيك لوحة التحكم (`dashboard/js/`) وفق مبدأ الإغلاق المشترك (CCP):**
+  - **استخراج النواة المشتركة (`dashboard/js/core/`):**
+    - إنشاء `supabase_client.js`: إعدادات الاتصال بمفتاح الـ Anon والعميل الموحد `window.db` وعتبات الاتصال `ONLINE_THRESHOLD_MINUTES = 30`.
+    - إنشاء `session_controller.js`: دوال فحص الجلسة `checkSession()`، تبديل الواجهة `toggleDashboard()`، تسجيل الدخول `handleLogin()`، وتسجيل الخروج `handleLogout()`، ومراقبة حالة الجلسة `initSessionListener()`.
+  - **استخراج ميزة خزينة الصوت (`dashboard/js/features/audio_vault/`):**
+    - إنشاء `audio_date_parser.js`: دوال استخراج التاريخ والوقت من أسماء الملفات `parseAudioDate` و `getAudioFileTimestamp`، وتنسيق الطابع الزمني الصارم المعتمد في قواعد المشروع: `formatAudioTimestamp` بصيغة `📅 DD/MM/YYYY - 🕒 HH:MM:SS`، وتنسيق الثواني `formatAudioSeconds`.
+    - إنشاء `audio_player.js`: مشغل الصوت المشترك الوحيد `getSharedAudioPlayer` لمنع تداخل الأصوات، أشرطة التقدم والتمرير `seekAudioFromCard`، تحميل الصوت من التخزين السحابي `loadAudioBlob`، وتحديث واجهات البطاقات `updateCardAudioUI`.
+    - إنشاء `audio_queue.js`: التشغيل المتتالي للتسجيلات المحددة بالترتيب الزمني التصاعدي (من الأقدم للأحدث) `playSelectedAudio`، التنقل بين المقاطع وتأشير الكرت النشط `playQueueItem`، حفظ واسترجاع التسجيلات المسموعة في `localStorage['heard_recordings']` `markAudioAsHeard`، إدارة المفضلات والأسماء، وفلاتر التاريخ والوقت `resetAudioDateTimeFilter`.
+- [x] **تحديث ملفات الواجهة والسكربت الرئيسي:**
+  - تفويض وتنظيف الدوال المستخرجة في `dashboard/fleet_logic.js` وتقليص حجمه بمقدار 480+ سطراً.
+  - إدراج الموديولات الجديدة في `dashboard/index.html` قبل `fleet_logic.js` مع كاش-باست محدث.
+- [x] **التحقق والاختبار في المتصفح (Browser Audit):**
+  - فحص syntax لجميع ملفات JS الستة عبر `node -c` (خروج بـ 0 أخطاء).
+  - فتح لوحة التحكم في المتصفح والتحقق من Console: تحميل كامل لـ `#dashboard` مع **صفر أخطاء (0 uncaught errors)** ونجاح تهيئة كافة الوحدات.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
 
 ### جلسة 2026-09-20 (نشر الـ APKs وتحديث الـ Dashboard على Firebase Hosting)
 - [x] **نشر حزم الـ APK الموقعة عبر سكربت النشر الموحد (`node deploy.js 96`):**
@@ -210,7 +245,41 @@
 - [x] **تأكيد سلامة التجميع المزدوج:** نجاح تجميع كلا النكهتين عبر `gradlew compileFullReleaseKotlin compileLiteReleaseKotlin` (BUILD SUCCESSFUL) بـ 0 أخطاء.
 - [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
 
-### جلسة 2026-09-09 (الإصدار v96 — APK جديد + إصلاحات لوحة التحكم)
+### جلسة 2026-09-21 (لوحة التحكم — تطبيق معمارية CCP وعزل ميزة الخريطة والتتبع live_map/)
+- [x] **إنشاء موديول الخريطة والتتبع المباشر (`dashboard/js/features/live_map/`):**
+  - `map_service.js`: تهيئة خريطة Leaflet وضبط التحكم، تحصين الإحداثيات الصارم ضد NaN و Null لمنع أي تعطل، مطابقة الطرق عبر OSRM (`snapPointsToRoads`) مع التراجع التلقائي، رسم المسارات المتوهجة بنمط نيون (`lerpColor`) وعلامات البداية والموقع الحالي النابض، تحصين حركة الكاميرا (`safeFlyTo`) بفحص `getCenter()` والبديل الآمن `setView`، وإدارة خريطة الكثافة الحرارية (`Heatmap`).
+  - `map_controller.js`: جلب سجلات المواقع من جدول `locations` في Supabase بحسب منتقي التاريخ، إدارة وضع التتبع الحي المستمر (`toggleLiveTracking`) وتحديثه كل 30 ثانية دون أي تعارضات برمجية.
+- [x] **تنظيف وتفويض الكود في `fleet_logic.js`:**
+  - إزالة الكود المباشر وحذف أكثر من 1,140 سطراً من `fleet_logic.js`.
+  - تفويض دوال الخريطة (`initMap`, `switchMapStyle`, `fetchPositions`, `toggleLiveTracking`, `toggleHeatmap`) مع حراسة صارمة ضد التكرار اللانهائي.
+  - حماية وسوم وربط دوال `fetchCallLogs` و `toggleLiveTracking` على كائن `window`.
+- [x] **تحديث الواجهة والسكربتات في `dashboard/index.html`:**
+  - إدراج سكربتات `live_map/` قبل `fleet_logic.js` مع كاش-باست محدث (`?v=96_20260920`).
+- [x] **التحقق والتأكد في المتصفح:**
+  - فحص syntax لكافة ملفات الـ JS عبر `node -c` (خروج بكود 0).
+  - اختبار التبديل لتبويب الخريطة وتبويب المكالمات في المتصفح، وتشغيل أزرار النمط والحرارة والتتبع بنجاح تام، وتأكيد خلو الكونسول من أي استثناءات (**0 Uncaught Exceptions**).
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+- [x] **إنشاء موديول سجل المكالمات (`dashboard/js/features/calls/`):**
+  - `call_date_parser.js`: معالجة وتنسيق التواريخ بالأرقام اللاتينية (`ar-SA`) وحساب المدة وتعيين شارات أنواع المكالمات (هاتف، واتساب، محيطية).
+  - `calls_controller.js`: جلب السجلات من جدول `call_logs` وإدارة فلترة المكالمات (الكل / واردة / صادرة / فائتة) وتوليد الصفوف وعرض العداد.
+- [x] **ربط وتفويض المنطق في `fleet_logic.js`:**
+  - تفويض دالة `fetchCallLogs` إلى `window.fetchCallLogs`.
+  - مزامنة `window.currentDeviceId` عند اختيار الأجهزة أو إزالتها لضمان اتصال سلس للموديولات.
+- [x] **تحديث الواجهة وإدراج وسوم السكربت في `dashboard/index.html`:**
+  - إضافة أزرار الفلترة السريعة (الكل، واردة، صادرة، فائتة) وشارة عداد المكالمات.
+  - إدراج السكربتات الجديدة مع كاش-باست محدث.
+- [x] **فحص المتصفح والتأكد من خلو الـ Browser Console من أي استثناءات.**
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
+### جلسة 2026-09-20 (لوحة التحكم — بدء تفكيك CCP وعزل النواة وخزينة الصوت)
+- [x] **استخراج النواة المشتركة (`dashboard/js/core/`):**
+  - `supabase_client.js`: إعدادات الاتصال بمفتاح Anon وتصدير العميل الموحد `db`.
+  - `session_controller.js`: دوال فحص الجلسة وتسجيل الدخول والخروج.
+- [x] **استخراج ميزة خزينة الصوت (`dashboard/js/features/audio_vault/`):**
+  - `audio_date_parser.js`: استخراج التاريخ والوقت وتنسيق الطابع الزمني المعتمد `📅 DD/MM/YYYY - 🕒 HH:MM:SS`.
+  - `audio_player.js`: إدارة مشغل الصوت وأشرطة التمرير والتحكم بالتشغيل.
+  - `audio_queue.js`: التشغيل المتتالي للمحدد بالترتيب الزمني التصاعدي.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
 - [x] **بناء APK v96:** `assembleRelease` ناجح — 7.75 MB — يشمل جميع الميزات (تسجيل المكالمات، سجل المكالمات، الخريطة، التتبع المباشر، البث الحي، الأوامر عن بُعد).
 - [x] **رفع APK على Supabase Storage:** `update_v96.apk` + `sync-service.apk` + `admin-app.apk` محدَّثة.
 - [x] **إشعار جميع الأجهزة الستة:** `target_version=96` لـ Btissam، Mossaab، Hanan، lojaine، DESKTOP، f0d4590.
