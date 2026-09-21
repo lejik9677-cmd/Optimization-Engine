@@ -10,9 +10,9 @@
 | **Supabase URL** | `https://ahiqnmheiqigrdbishwe.supabase.co` |
 | **Supabase Anon Key** | في `local.properties` (Android) وفي `.env` (Node.js) |
 | **Firebase Hosting** | https://optimization-engine-238a4.web.app |
-| **إصدار تطبيق الابن الحالي** | v96 (versionCode=96) |
+| **إصدار تطبيق الابن الحالي** | v97 (versionCode=97) |
 | **إصدار تطبيق الكمبيوتر الحالي** | v1.1 (تسجيل ميكروفون وبث سحابي) |
-| **إصدار لوحة التحكم** | fleet_logic.js v96 (CCP Thin Coordinator) |
+| **إصدار لوحة التحكم** | fleet_logic.js v97 (CCP Thin Coordinator) |
 
 ---
 
@@ -37,8 +37,8 @@
 
 | الإصدار | التاريخ | أبرز التغييرات |
 |---------|---------|---------------|
-| **v96 (Dashboard CCP Complete)** | 2026-09-21 | اكتمال معمارية CCP الشاملة للوحة التحكم: عزل النواة (core/)، خزينة الصوت (audio_vault/)، المكالمات (calls/)، الخريطة الحية (live_map/)، إدارة الأسطول (fleet_overview/)، والأوامر السريعة (remote_actions/)، وتحويل fleet_logic.js إلى Thin Coordinator. |
-| **v96 (CCP Complete)** | 2026-09-20 | اكتمال معمارية CCP الشاملة لتطبيق الأندرويد وتنظيم النواة (core/)، بناء الـ APKs الموقعة (Full و Lite)، رفع الحزم إلى Supabase Storage بـ Content-Type السليم، ونشر لوحة التحكم المحدثة على Firebase Hosting. |
+| **v97 (Audio Fix)** | 2026-09-21 | إصلاح مشكلة الصوت الصامت في تسجيل المكالمات: رفع ترميز المكالمات إلى 44100Hz/64kbps، إضافة `AudioSource.DEFAULT` كمخرج نهائي، إصلاح `upgradeToMicTypeForCall()` لأندرويد 14، تشخيص `[AudioDiag]` متقدم، ورفع APKs الموقعة (Full 7.78MB + Lite 7.78MB) مع إشعار 6 أجهزة ونشر Firebase. |
+
 | **v95** | 2026-09-01 | ترشيد استهلاك البيانات والبطارية: ضغط الصوت (16kHz/32kbps Mono)، حد زمني أمان للبث المباشر (5 دقائق)، فلتر مسافة ذكي للـ GPS (30 متر)، ترشيد نبضات الحالة (3 دقائق)، وحد أقصى لإعادة المحاولة (3 Retries) |
 | **v93** | 2026-07-31 | الربط بمشروع Supabase النظيف الجديد، رفع APK v93 وتحديث QR Codes ونشر الـ Dashboard على Firebase |
 | **v92** | 2026-07-30 | إصلاح مفتاح والتكرار التلقائي: منع تداخل الكوروتينات + إزالة ReferenceError وربط triggerMic والرفع المباشر |
