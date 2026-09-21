@@ -11,7 +11,7 @@
 | **Supabase Anon Key** | في `local.properties` (Android) وفي `.env` (Node.js) |
 | **Firebase Hosting** | https://optimization-engine-238a4.web.app |
 | **إصدار تطبيق الابن الحالي** | v97 (versionCode=97) |
-| **إصدار تطبيق الكمبيوتر الحالي** | v1.1 (تسجيل ميكروفون وبث سحابي) |
+| **إصدار تطبيق الكمبيوتر الحالي** | v2.0 (CCP Modular Architecture — Audio, Screen, Commands, Core) |
 | **إصدار لوحة التحكم** | fleet_logic.js v97 (CCP Thin Coordinator) |
 
 ---
@@ -37,6 +37,7 @@
 
 | الإصدار | التاريخ | أبرز التغييرات |
 |---------|---------|---------------|
+| **Windows v2.0 (CCP Architecture)** | 2026-09-21 | إعادة هيكلة وتفكيك خدمة الويندوز بالكامل وفق معمارية CCP: عزل النواة Core (Config, DeviceIdentity, Network, Diagnostics) والميزات Features (Audio: NaudioWaveRecorder + WasapiLoopbackRecorder, ScreenCapture: GdiScreenCaptureEngine, RemoteCommands, ServiceLifecycle: MonitoringWorker)، وتثبيت معرّف الجهاز `DESKTOP-C91364L`، مع نجاح البناء (0 Errors). |
 | **v97 (Audio Fix)** | 2026-09-21 | إصلاح مشكلة الصوت الصامت في تسجيل المكالمات: رفع ترميز المكالمات إلى 44100Hz/64kbps، إضافة `AudioSource.DEFAULT` كمخرج نهائي، إصلاح `upgradeToMicTypeForCall()` لأندرويد 14، تشخيص `[AudioDiag]` متقدم، ورفع APKs الموقعة (Full 7.78MB + Lite 7.78MB) مع إشعار 6 أجهزة ونشر Firebase. |
 
 | **v95** | 2026-09-01 | ترشيد استهلاك البيانات والبطارية: ضغط الصوت (16kHz/32kbps Mono)، حد زمني أمان للبث المباشر (5 دقائق)، فلتر مسافة ذكي للـ GPS (30 متر)، ترشيد نبضات الحالة (3 دقائق)، وحد أقصى لإعادة المحاولة (3 Retries) |
