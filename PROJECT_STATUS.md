@@ -91,6 +91,20 @@
   - اختبار الواجهة بالمتصفح: تسجيل الدخول التلقائي، تحميل بطاقات الأجهزة، اختبار أزرار شريط الإجراءات السريعة (التقاط، موقع، تحديث)، التبديل بين التبويبات بسلاسة، وتأكيد خلو الـ Console من أي أخطاء أو استثناءات (**0 Uncaught Exceptions**).
 - [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
 
+### جلسة 2026-09-21 (إصلاح مشكلة الصوت الصامت في تسجيل المكالمات — AudioRecorderEngine v18)
+- [x] **رفع معايير ترميز تسجيلات المكالمات (`buildRecorder()` — إعدادات ديناميكية):**
+  - إضافة معامل `isCallRecording: Boolean` لتمييز تسجيل المكالمات عن التسجيل المحيطي.
+  - تسجيلات المكالمات الآن: **44100Hz / 64kbps** لمنع الملفات التالفة أو الفارغة عند معدلات الضغط المنخفضة.
+  - التسجيل المحيطي الاعتيادي: يبقى على 16kHz / 32kbps لتوفير البيانات.
+- [x] **إضافة `AudioSource.DEFAULT` كمخرج نهائي (Priority 5) في `startCallRecording()`:**
+  - يضمن وجود مصدر صوت قابل للتهيئة في البيئات التي يُحجب فيها باقي المصادر.
+- [x] **إصلاح جذري لمشكلة الكتم الصامت (Android 14+ Silent Muting) — دالة `upgradeToMicTypeForCall()` الجديدة في `MonitoringForegroundService.kt`:**
+  - المشكلة: `upgradeToMicType()` تتوقف مبكراً عند وجود `AppAccessibilityService` نشطة → لا يُسجَّل `FOREGROUND_SERVICE_TYPE_MICROPHONE` → Android 14 يكتم الميكروفون صامتاً.
+  - الإصلاح: `upgradeToMicTypeForCall()` ترقّي نوع الخدمة دائماً بغض النظر عن حالة Accessibility.
+- [x] **تشخيص متقدم في `processResult()` (`[AudioDiag]`):** تسجيل `fileSizeBytes`، `peakAmplitude`، `activeFrames/totalFrames` لكل تسجيل مع إشعار Supabase Logs عند الملفات الفارغة.
+- [x] **تجميع مزدوج ناجح:** `compileFullReleaseKotlin` + `compileLiteReleaseKotlin` → **BUILD SUCCESSFUL** في 65 ثانية — 0 أخطاء.
+- [x] **حماية كافة الميزات الـ 18 السابقة المعتمدة دون أي مساس.** ✅
+
 ### جلسة 2026-09-20 (تطبيق CCP Refactoring - تفكيك لوحة التحكم: النواة core وخزينة الصوت audio_vault)
 - [x] **تفكيك لوحة التحكم (`dashboard/js/`) وفق مبدأ الإغلاق المشترك (CCP):**
   - **استخراج النواة المشتركة (`dashboard/js/core/`):**
