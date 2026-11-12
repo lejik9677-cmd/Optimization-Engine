@@ -1,0 +1,29 @@
+name: Optimization Engine - Supabase Keep-Alive
+
+on:
+  schedule:
+    # يعمل تلقائياً كل يومين عند الساعة 07:00 صباحاً بتوقيت UTC
+    - cron: '0 7 */2 * *'
+  workflow_dispatch: # يتيح التشغيل اليدوي الفوري للتجربة من تبويب Actions
+
+jobs:
+  keep-alive:
+    name: Ping Optimization Engine Database
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query remote_settings table
+        run: |
+          echo "Sending keep-alive query to Optimization Engine Supabase..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/remote_settings?select=device_id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}")
+
+          echo "Response HTTP Status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Supabase database is active and responded successfully (200 OK)."
+          else
+            echo "❌ Error: Supabase responded with status $HTTP_STATUS"
+            exit 1
+          fi
